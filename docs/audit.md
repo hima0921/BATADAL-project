@@ -2,7 +2,7 @@
 
 ## 1. Purpose and files
 
-This audit checks the three BATADAL files before any models are built. The goal is to find problems in the data early (names, types, time order, empty cells, odd values, labels) and list the decisions the team needs to make.
+This audit checks the three BATADAL files before any models are built. The goal is to find problems in the data early (names, types, time order, empty cells, odd values, labels) and list the decisions we need to make.
 
 All checks are in `notebooks/Data Audit.ipynb`. Every number below comes from the output of that notebook, except the real attack times, which come from the BATADAL site's attack table (saved as `docs/attacks_dataset2.png`). Nothing in the data files was changed.
 
@@ -114,7 +114,7 @@ The notebook finds 5 runs of back-to-back hours labeled 1. These runs add up to 
 - The real attack hours add up to 492 and the labeled hours to 219. So about 273 attack hours are inside the -999 rows, assuming the site's list is complete.
 - Every row before 2016-09-14 03:00 is -999.
 
-## 4. Issues and decisions for the team
+## 4. Issues and decisions we need to make
 
 1. **Constant features.** 7 features never change in Dataset 1 and Dataset 2: S_PU1, F_PU3, S_PU3, F_PU5, S_PU5, F_PU9, S_PU9. The plan is to scale the continuous features with MinMaxScaler fitted on the training data. A column that never changes has no range to scale. Decision needed: drop these columns or keep them.
 
@@ -124,7 +124,7 @@ The notebook finds 5 runs of back-to-back hours labeled 1. These runs add up to 
 
 4. **Real attack times and labeled times are different.** The site gives the real start and end of each attack. The labels in the file cover only part of each real attack, and the labels start later: by 4 hours (attack 1), 24 hours (attack 4), 11 hours (attack 5), and 14 hours (attack 6). Attack 3 is the same in both, and attacks 2 and 7 have no labels. Each labeled run is inside its real window, so this is not a date-format problem. Detection delay needs to be measured from the real start time in the site's table (section 3). Measuring from the labeled start would make the delay look shorter than it is, by up to 24 hours (attack 4).
 
-5. **Precision.** Dataset 1 has up to 9 decimal places. Dataset 2 and the Test set have 2. Open question for the team. No recommendation.
+5. **Precision.** Dataset 1 has up to 9 decimal places. Dataset 2 and the Test set have 2. Open question for us. No recommendation.
 
 6. **The Test set was looked at.** Summary values of the Test set (ranges and constant columns) were looked at. These values showed pump 3 running and a few values above the training maximum. This is for information only. No model choice or threshold is based on it. The plan is to keep the Test set untouched until all choices and thresholds are frozen.
 
