@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .layers import (
+from layers import (
     LinearBlock,
     TransformerEncoderBlock,
     TransformerDecoderBlock,
@@ -52,6 +52,20 @@ class Transformer_Recon_Model(nn.Module):
                     dropout=kwargs["dropout"],
                     activation_type=kwargs["activation_type"]))  # (Batch,Seq_window + Seq_enc,Dim_emb)
 
+        self.final_encoder_linear_block = nn.Sequential(
+            nn.LayerNorm(kwargs["embedding_dim"]),
+            LinearBlock(
+                use_activation=True,
+                in_dim=kwargs["embedding_dim"],
+                out_dim=kwargs["hidden_dim"],
+                activation_type=kwargs["activation_type"]),
+            LinearBlock(
+                use_activation=True,
+                in_dim=kwargs["hidden_dim"],
+                out_dim=16,
+                activation_type="tanh")
+        )  # (Batch,Seq_window,Dim_emb)
+
         self.encoder_transformer_blocks.append(
             TransformerEncoderBlock(
                 heads=kwargs["num_heads"],
@@ -77,6 +91,7 @@ class Transformer_Recon_Model(nn.Module):
                     heads=kwargs["num_heads"],
                     embedding_dim=kwargs["embedding_dim"],
                     hidden_dim=kwargs["hidden_dim"],
+                    context_dim=16,
                     dropout=kwargs["dropout"],
                     activation_type=kwargs["activation_type"]))  # (Batch,Seq_window,Dim_emb)
 
@@ -88,9 +103,10 @@ class Transformer_Recon_Model(nn.Module):
                 out_dim=kwargs["hidden_dim"],
                 activation_type=kwargs["activation_type"]),
             LinearBlock(
-                use_activation=False,
+                use_activation=True,
                 in_dim=kwargs["hidden_dim"],
-                out_dim=kwargs["in_dim"]),
+                out_dim=kwargs["in_dim"],
+                activation_type="tanh"),
         )  # (Bach,Seq_window,Dim_in)
 
     def forward_encoder(self, x):
@@ -106,6 +122,7 @@ class Transformer_Recon_Model(nn.Module):
             x = encoder_transformer_block(x)
 
         x_enc = x[:, :self.num_encodings, :]
+        x_enc = self.final_encoder_linear_block(x_enc)
         return x_enc
 
     def forward_decoder(self, x_enc):
