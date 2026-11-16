@@ -27,7 +27,7 @@ This document describes the data loader and the training script for the Transfor
 |---|---|---|
 | Window | 24 hours | Config file |
 | Split | 60 / 20 / 20, 24-hour gaps | Loader |
-| Scaling range | -1 to 1 (training script), 0 to 1 (loader default) | Both |
+| Scaling range | 0 to 1 | Loader default and training script |
 | Constant columns | Dropped (36 features) | Loader and `--constant-policy` |
 | Rounding | 2 decimals | Loader |
 | Label rule for Dataset 2 | Real attack windows (`schedule`) | Loader |
@@ -60,10 +60,10 @@ This document describes the data loader and the training script for the Transfor
 
 ### Scaling
 
-- **Min-max scaling is fitted on the train block only. On/off columns are not scaled.**
-- Source: proposal (Milestone 1).
+- **Min-max scaling to the range 0 to 1 is fitted on the train block only. On/off columns are already 0 or 1 and are not scaled.**
+- Source: proposal (Milestone 1), which specifies the 0 to 1 range.
 - Literature: fitting the scaler on normal training data only is common practice. Nemade et al. fit theirs on normal rows only [4], and Salici et al. take their normalization statistics from nominal training data only [11]. Both of those use standard (z-score) scaling. We use min-max because the proposal specifies it.
-- **Scaled values are not clipped.** `L_T1` and `P_J415` go above the training maximum in later files (audit, "Value ranges"), and a value outside the learned range is useful evidence. This differs from Salici et al., who clip to a fixed range [11].
+- **Scaled values are not clipped.** `L_T1` and `P_J415` go above the training maximum in later files (audit, "Value ranges"), and a value outside the learned range is useful evidence. Scaled values in the validation block, Dataset 2 and the Test set can therefore fall below 0 or above 1. This differs from Salici et al., who clip to a fixed range [11].
 
 ### Constant columns
 
@@ -113,6 +113,7 @@ This document describes the data loader and the training script for the Transfor
 - **A Transformer autoencoder with four learnable bottleneck tokens and a decoder of 24 learned queries.** The settings come from the config file.
 - Literature: learnable tokens that summarize a sequence go back to BERT's classification token [8]. Using several of them as an autoencoder bottleneck appears in Salici et al. for time series [11] and in TiTok for images [16]. Learned decoder queries with cross-attention come from DETR [10] and Perceiver IO [12]. Pintilie et al. show why a bottleneck matters: without one, a Transformer decoder can reconstruct too easily to learn a useful representation [14].
 - **The bottleneck is 4 tokens of 16 values each, so a window is compressed to 64 numbers.** The number of tokens is the `num_encodings` setting in the config file. The 16 values per token are fixed inside `model.py`. Neither size has been tuned (section 6).
+- **The output layer is a sigmoid, so every reconstructed value lies between 0 and 1.** This matches the scaling range. The bottleneck values pass through `tanh` and lie between -1 and 1; that range is internal to the model and unrelated to the data scaling.
 - **GELU activation, layer normalization before each block, sinusoidal positions.** GELU follows BERT and ViT [8][9]. Normalizing before each block follows ViT [9]. The positional encoding is the original Transformer's [7].
 
 ### Optimizer and schedule
@@ -154,14 +155,15 @@ The calibration block, Dataset 2 and the Test set. Thresholds and evaluation com
 
 ## 5. Issues and decisions we need to make
 
-1. **Scaling range and output layer.** The training script scales to -1 to 1 because the model ends in `tanh`. The proposal says 0 to 1. Because values are not clipped, some scaled values exceed 1, which `tanh` cannot produce.
+1. **Output layer and out-of-range values.** The data is scaled to 0 to 1 and the model ends in a sigmoid, as the proposal specifies. Two consequences remain. Because values are not clipped, some scaled values fall outside 0 to 1, which a sigmoid cannot produce, so those readings always carry some reconstruction error. And the on/off features sit exactly at 0 or 1, where a sigmoid trained with squared error learns slowly.
 2. **Constant columns.** The default is 36 features. The proposal and Nemade et al. [4] use 43.
 3. **Rounding.** No published BATADAL study we read does this. It follows from our audit and should be stated in the report.
 4. **Label rule.** The default treats the 3,685 hours outside the attack windows as normal. They are unlabeled in the file.
 5. **No warm-up and no weight decay.** The original Transformer uses warm-up [7]. Whether adding either helps here is untested.
 6. **Model selection by reconstruction loss.** See the limit in section 4. A check on Dataset 2 is needed before a checkpoint is treated as final.
 7. **12-hour window.** The proposal asks for 12 and 24 hours. Only the config of 24 was tested.
-8. **Comparability with published BATADAL results.** Scores in [3] and [4] use different label handling and thresholds chosen with knowledge of the attacks. Nemade et al. pick the threshold that maximizes F1 on the labeled series [4]. Ours comes from normal data under a false-alarm budget, so lower scores are expected.
+8. **Comparability with our earlier runs.** The proof of concept scaled the data to -1 to 1 with a `tanh` output. Halving the range divides squared error by four, so losses from the current code are about four times smaller for the same reconstruction quality. Loss values from before and after the change cannot be compared directly.
+9. **Comparability with published BATADAL results.** Scores in [3] and [4] use different label handling and thresholds chosen with knowledge of the attacks. Nemade et al. pick the threshold that maximizes F1 on the labeled series [4]. Ours comes from normal data under a false-alarm budget, so lower scores are expected.
 
 ## 6. To do
 
