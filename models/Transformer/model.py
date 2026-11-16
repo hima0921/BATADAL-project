@@ -19,7 +19,9 @@ class Transformer_Recon_Model(nn.Module):
         """
         Encoder Section.
         """
-        self.positional_encoding = SinusoidalPositionalEncoding(kwargs["embedding_dim"], dropout=kwargs["dropout"])
+        self.positional_encoding = SinusoidalPositionalEncoding(
+            kwargs["embedding_dim"],
+            dropout=kwargs["dropout"])
 
         # Encooder's learnable representation embeddings.
         self.num_encodings = kwargs["num_encodings"]
@@ -52,6 +54,14 @@ class Transformer_Recon_Model(nn.Module):
                     dropout=kwargs["dropout"],
                     activation_type=kwargs["activation_type"]))  # (Batch,Seq_window + Seq_enc,Dim_emb)
 
+        self.encoder_transformer_blocks.append(
+            TransformerEncoderBlock(
+                heads=kwargs["num_heads"],
+                embedding_dim=kwargs["embedding_dim"],
+                hidden_dim=kwargs["hidden_dim"],
+                dropout=0.0,
+                activation_type=kwargs["activation_type"]))  # (Batch,Seq_window + Seq_enc,Dim_emb)
+
         self.final_encoder_linear_block = nn.Sequential(
             nn.LayerNorm(kwargs["embedding_dim"]),
             LinearBlock(
@@ -62,17 +72,9 @@ class Transformer_Recon_Model(nn.Module):
             LinearBlock(
                 use_activation=True,
                 in_dim=kwargs["hidden_dim"],
-                out_dim=16,
-                activation_type="tanh")
+                out_dim=kwargs["bottleneck_dim"],  # Encoder's Bottleneck dim.
+                activation_type="tanh")  # Output layer ranges between [-1,1]
         )  # (Batch,Seq_window,Dim_emb)
-
-        self.encoder_transformer_blocks.append(
-            TransformerEncoderBlock(
-                heads=kwargs["num_heads"],
-                embedding_dim=kwargs["embedding_dim"],
-                hidden_dim=kwargs["hidden_dim"],
-                dropout=0.0,
-                activation_type=kwargs["activation_type"]))  # (Batch,Seq_window + Seq_enc,Dim_emb)
 
         """
         Decoder Section.
@@ -91,7 +93,7 @@ class Transformer_Recon_Model(nn.Module):
                     heads=kwargs["num_heads"],
                     embedding_dim=kwargs["embedding_dim"],
                     hidden_dim=kwargs["hidden_dim"],
-                    context_dim=16,
+                    context_dim=kwargs["bottleneck_dim"],
                     dropout=kwargs["dropout"],
                     activation_type=kwargs["activation_type"]))  # (Batch,Seq_window,Dim_emb)
 
@@ -106,7 +108,7 @@ class Transformer_Recon_Model(nn.Module):
                 use_activation=True,
                 in_dim=kwargs["hidden_dim"],
                 out_dim=kwargs["in_dim"],
-                activation_type="tanh"),
+                activation_type="sigmoid"),  # Output layer ranges between [0,1].
         )  # (Bach,Seq_window,Dim_in)
 
     def forward_encoder(self, x):

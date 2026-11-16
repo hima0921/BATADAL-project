@@ -157,7 +157,7 @@ def main():
     parser.add_argument(
         "--lr-steps",
         help="Global steps in between halving learning rate.",
-        default=3_000,
+        default=7_500,  # Hardcoded assuming max iteration is 30_000.
         type=int)
     parser.add_argument(
         "--lr-gamma",
@@ -229,12 +229,15 @@ def main():
     num_dec_blocks = config_dict["num_dec_blocks"]
     hidden_dim = config_dict["hidden_dim"]
     embedding_dim = config_dict["embedding_dim"]
-    num_encodings = config_dict["num_encodings"]
     activation_type = config_dict["activation_type"]
 
+    # Bottleneck parameters.
+    num_encodings = config_dict["num_encodings"]
+    bottleneck_dim = config_dict["bottleneck_dim"]
+
     # BATADAL Datasets: Dataset 1 split 60/20/20 by time, with 24-hour gaps.
-    # feature_range is (-1, 1) because the model's last layer is tanh.
-    feature_range = (-1.0, 1.0)
+    # feature_range uses (0, 1) as per the proposal.
+    feature_range = (0.0, 1.0)
     dataloaders, scaler, dataset_info = build_dataloaders(
         str(dataset_path),
         window=window,
@@ -269,6 +272,7 @@ def main():
         num_window=window,
         num_enc_blocks=num_enc_blocks,
         num_dec_blocks=num_dec_blocks,
+        bottleneck_dim=bottleneck_dim,
         dropout=dropout,
         activation_type=activation_type)
 
@@ -355,6 +359,7 @@ def main():
     logging.info(f"Num Encoder Blocks: {num_enc_blocks:,}")
     logging.info(f"Num Decoder Blocks: {num_dec_blocks:,}")
     logging.info(f"Num Encodings: {num_encodings:,}")
+    logging.info(f"Bottleneck dim: {bottleneck_dim:,}")
     logging.info(f"Activation Type: {activation_type}")
     logging.info(f"Hidden Dimension: {hidden_dim:,}")
     logging.info(f"Embedding Dimension: {embedding_dim:,}")
@@ -383,6 +388,7 @@ def main():
         "hidden_dim": hidden_dim,
         "embedding_dim": embedding_dim,
         "num_encodings": num_encodings,
+        "bottleneck_dim": bottleneck_dim,
         "num_enc_blocks": num_enc_blocks,
         "num_dec_blocks": num_dec_blocks,
         "activation_type": activation_type,
