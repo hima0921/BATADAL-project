@@ -157,7 +157,7 @@ def main():
     parser.add_argument(
         "--lr-steps",
         help="Global steps in between halving learning rate.",
-        default=7_500,  # Hardcoded assuming max iteration is 30_000.
+        default=3_500,
         type=int)
     parser.add_argument(
         "--lr-gamma",
@@ -178,7 +178,7 @@ def main():
         "--seed",
         help="Random seed for model weights and batch order.",
         type=int,
-        default=69)
+        default=0)
     parser.add_argument(
         "-c",
         "--config-path",
