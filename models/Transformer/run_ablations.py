@@ -13,7 +13,8 @@ collects the results into one CSV and draws the ablation plots.
 
     python run_ablations.py \
         --configs-dir configs/ablation \
-        --dataset-path "data/Training dataset 1.csv" \
+        --dataset-path data/processed \
+        --dataset2-path data/processed/dataset2_scaled.csv \
         --runs-dir runs/ablation \
         --seeds 0 1 2
 
@@ -97,12 +98,12 @@ def main():
         required=True)
     parser.add_argument(
         "--dataset-path",
-        help="File path for the normal BATADAL training CSV (Training dataset 1).",
+        help="Folder of processed files from Pipeline.ipynb (data/processed).",
         type=pathlib.Path,
         required=True)
     parser.add_argument(
         "--dataset2-path",
-        help="File path for Training dataset 2 (needed by the evaluate stage).",
+        help="Processed Dataset 2 file, data/processed/dataset2_scaled.csv (for the evaluate stage).",
         type=pathlib.Path,
         default=None)
     parser.add_argument(

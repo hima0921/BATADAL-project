@@ -1,6 +1,6 @@
 {
-    "max_global_steps": 30000,
-    "model_lr": 3e-4,
+    "max_global_steps": 15000,
+    "model_lr": 3e-3,
     "window": 24,
     "dropout": 0.1,
     "num_heads": 8,

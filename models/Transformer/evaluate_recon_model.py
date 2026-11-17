@@ -21,8 +21,8 @@ from batadal_dataset import build_dataloaders
 Scores, calibrates and evaluates a FROZEN Transformer reconstruction model.
 
     python evaluate_recon_model.py \
-        --dataset-path "data/Training dataset 1.csv" \
-        --dataset2-path "data/Training dataset 2.csv" \
+        --dataset-path data/processed \
+        --dataset2-path data/processed/dataset2_scaled.csv \
         --model-checkpoint runs/recon_24h/best_model.pt \
         --out-dir runs/recon_24h/evaluation
 
@@ -81,6 +81,23 @@ def load_model(checkpoint_path):
         logging.error(f"Could not load checkpoint {checkpoint_path}: {e}")
         return False, None
     return True, checkpoint_dict
+
+
+def scaler_matches(scaler, classifier_dict):
+    """
+    True when the data's scaler agrees with the one stored in the checkpoint.
+    Checkpoints trained before the shared data pipeline stored values for all
+    43 raw columns plus a keep mask; those are compared on the kept columns.
+    """
+    saved_min = np.asarray(classifier_dict["scaler_min"], dtype=np.float64)
+    saved_span = np.asarray(classifier_dict["scaler_span"], dtype=np.float64)
+    if len(saved_min) != len(scaler.min_):
+        keep = np.asarray(classifier_dict["scaler_keep"], dtype=bool)
+        saved_min, saved_span = saved_min[keep], saved_span[keep]
+    if len(saved_min) != len(scaler.min_):
+        return False
+    return bool(np.allclose(scaler.min_, saved_min, rtol=1e-4, atol=1e-6)
+                and np.allclose(scaler.span_, saved_span, rtol=1e-4, atol=1e-6))
 
 
 # ----------------------------- 1. Scoring -----------------------------------
@@ -748,12 +765,12 @@ def main():
         default="cpu")
     parser.add_argument(
         "--dataset-path",
-        help="File path for the normal BATADAL training CSV (Training dataset 1).",
+        help="Folder of processed files from Pipeline.ipynb (data/processed).",
         type=pathlib.Path,
         required=True)
     parser.add_argument(
         "--dataset2-path",
-        help="File path for the development CSV with attacks (Training dataset 2).",
+        help="File path for the processed Dataset 2 (data/processed/dataset2_scaled.csv).",
         type=pathlib.Path,
         required=True)
     parser.add_argument(
@@ -861,9 +878,8 @@ def main():
     feature_names = dataset_info["feature_names"]
     if classifier_dict["feature_names"] != feature_names:
         raise Exception("Checkpoint was trained on a different set of features.")
-    if not np.allclose(scaler.min_, classifier_dict["scaler_min"]) or \
-            not np.allclose(scaler.span_, classifier_dict["scaler_span"]):
-        raise Exception("Scaler differs from the checkpoint's: is this the same training file?")
+    if not scaler_matches(scaler, classifier_dict):
+        raise Exception("Scaler differs from the checkpoint's: is this the same processed data?")
 
     # Recon Model.
     model = Transformer_Recon_Model(

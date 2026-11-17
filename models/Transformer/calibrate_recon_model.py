@@ -15,6 +15,7 @@ from evaluate_recon_model import (
     SCORE_TYPES,
     restricted_float,
     load_model,
+    scaler_matches,
     sensor_errors,
     calibrate,
     save_calibration,
@@ -24,7 +25,7 @@ from evaluate_recon_model import (
 Calibrates a FROZEN Transformer reconstruction model and saves the result.
 
     python calibrate_recon_model.py \
-        --dataset-path "data/Training dataset 1.csv" \
+        --dataset-path data/processed \
         --model-checkpoint runs/recon_24h/best_model.pt \
         --out-dir runs/recon_24h/calibration
 
@@ -56,7 +57,7 @@ def main():
         default="cpu")
     parser.add_argument(
         "--dataset-path",
-        help="File path for the normal BATADAL training CSV (Training dataset 1).",
+        help="Folder of processed files from Pipeline.ipynb (data/processed).",
         type=pathlib.Path,
         required=True)
     parser.add_argument(
@@ -141,9 +142,8 @@ def main():
     feature_names = dataset_info["feature_names"]
     if classifier_dict["feature_names"] != feature_names:
         raise Exception("Checkpoint was trained on a different set of features.")
-    if not np.allclose(scaler.min_, classifier_dict["scaler_min"]) or \
-            not np.allclose(scaler.span_, classifier_dict["scaler_span"]):
-        raise Exception("Scaler differs from the checkpoint's: is this the same training file?")
+    if not scaler_matches(scaler, classifier_dict):
+        raise Exception("Scaler differs from the checkpoint's: is this the same processed data?")
 
     # Recon Model.
     model = Transformer_Recon_Model(

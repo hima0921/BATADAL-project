@@ -1,21 +1,41 @@
 """
 BATADAL data loader pipeline (PyTorch).
 
+Reads the shared, already-prepared data that notebooks/Pipeline.ipynb saves in
+data/processed/ (see docs/pipeline.md), so every model uses one version of the
+data. Rounding, dropping the 7 never-changing columns, the 60/20/20 split and
+the scaling are done by that notebook, not here.
+
     from batadal_dataset import build_dataloaders
     loaders, scaler, info = build_dataloaders(
-        "data/Training dataset 1.csv", "data/Training dataset 2.csv", window=24)
+        "data/processed", "data/processed/dataset2_scaled.csv", window=24)
     for x, target, label, row in loaders["train"]:
         ...
 """
+import os
+
 import numpy as np
 import pandas as pd
+import joblib
 
 import torch
 from torch.utils.data import DataLoader, Dataset
 
 UNKNOWN = -1          # Label for "not known" (file value -999, or no label column)
-N_CONTINUOUS = 31
-N_BINARY = 12
+
+# (pipeline step 7): the files Pipeline.ipynb writes to data/processed/.
+PROCESSED_FILES = {
+    "train": "train_scaled.csv",
+    "val": "val_scaled.csv",
+    "calib": "cal_scaled.csv"}
+DATASET2_FILE = "dataset2_scaled.csv"
+SCALER_FILE = "scaler.joblib"
+
+# (pipeline step 0b, audit issue 1): the 7 columns that never change in
+# Dataset 1 or Dataset 2. The pipeline drops them, so they are not in the
+# processed files. Listed here to report them and to drop them from the raw
+# Test set at the end.
+DROPPED_COLUMNS = ["S_PU1", "F_PU3", "S_PU3", "F_PU5", "S_PU5", "F_PU9", "S_PU9"]
 
 # (audit s3 "Attack periods", issue 4): the 7 REAL attack windows of
 # Dataset 2 from the BATADAL site, not the file labels. The file labels cover
@@ -33,54 +53,71 @@ ATTACK_WINDOWS_DATASET2 = [
 
 
 # Loading and Validation.
-def load_batadal_csv(path, round_decimals=2):
-    """Read one BATADAL file. Returns (datetimes, feature_names, X, raw_flags)."""
-    df = pd.read_csv(path)
-
-    # (audit "Column names"): Dataset 2 has a leading space on every
-    # header except DATETIME. Strip, so all three files share one schema.
-    df.columns = df.columns.str.strip()
-
-    # (audit "Time"): DATETIME is day/month/year hour. Parse it with an
-    # explicit format, then require strictly hourly rows. The audit found no
-    # gaps or repeats; this check makes the windowing fail loudly if a future
-    # file breaks that, because a window across a gap is not 24 real hours.
-    when = pd.to_datetime(df["DATETIME"], format="%d/%m/%y %H")
+def check_table(path, when, features, X):
+    """Checks shared by the processed files and the raw Test set."""
+    # (audit "Time"): rows must be strictly hourly inside a file. The audit
+    # found no gaps or repeats; this fails loudly if a file breaks that,
+    # because a window across a gap is not 24 real hours.
     if not (when.diff().dropna() == pd.Timedelta(hours=1)).all():
         raise ValueError(f"{path}: rows are not strictly hourly")
 
-    features = [c for c in df.columns if c not in ("DATETIME", "ATT_FLAG")]
-
-    # (audit "Data types"): the same column is int in one file and
-    # float in another (1 vs 1.00). Cast everything to float32 so dtype never
-    # depends on which file was read.
-    X = df[features].to_numpy(np.float32)
-
-    # (audit "Empty cells", "On/off columns"): no imputation code,
-    # because there is nothing to impute. Assert it instead of assuming it.
+    # (audit "Empty cells", "On/off columns"): nothing is imputed, because
+    # there is nothing to impute. Assert it instead of assuming it.
     if np.isnan(X).any():
         raise ValueError(f"{path}: contains empty cells")
     binary = np.array([c.startswith("S_") for c in features])
     if not np.isin(X[:, binary], (0, 1)).all():
         raise ValueError(f"{path}: an S_ column has values other than 0 and 1")
-    if (binary.sum(), (~binary).sum()) != (N_BINARY, N_CONTINUOUS):
-        raise ValueError(f"{path}: expected 31 continuous + 12 on/off features")
 
-    # (audit issue 5, exploration step 4 "Rounding"): Dataset 1 has up
-    # to 9 decimals, Dataset 2 and the Test set have 2. Round everything to 2 so
-    # the model trains on the precision it will be scored on. Otherwise a sensor
-    # like P_J280 (range 0.017, so only 3 possible values at 2 decimals) shows
-    # rounding steps the model never saw, which become false alarms.
+
+def load_processed_csv(path):
+    """
+    Read one file written by Pipeline.ipynb. Returns
+    (datetimes, feature_names, X, raw_flags). The values are already rounded,
+    scaled and without the 7 dropped columns, so nothing is changed here.
+    """
+    # (pipeline step 7): the processed files store DATETIME as text like
+    # "2014-01-06 00:00:00". It is parsed after the column check below, so a
+    # raw CSV passed by mistake gets a clear error, not a date-format one.
+    df = pd.read_csv(path)
+
+    present = [c for c in DROPPED_COLUMNS if c in df.columns]
+    if len(present) > 0 or "ATT_FLAG" not in df.columns:
+        raise ValueError(
+            f"{path}: this does not look like a processed file from Pipeline.ipynb "
+            f"(it should have ATT_FLAG and none of the 7 dropped columns). "
+            f"Pass the files in data/processed/, not the raw CSVs.")
+    when = pd.to_datetime(df["DATETIME"], format="%Y-%m-%d %H:%M:%S")
+
+    features = [c for c in df.columns if c not in ("DATETIME", "ATT_FLAG")]
+
+    # (audit "Data types"): cast everything to float32 so dtype never depends
+    # on which file was read. The rounding was already done by the pipeline,
+    # in float64, before these values were saved.
+    X = df[features].to_numpy(np.float32)
+    check_table(path, when, features, X)
+    return when.to_numpy(), features, X, df["ATT_FLAG"].to_numpy()
+
+
+def load_raw_test_csv(path, scaler):
+    """
+    Read the RAW Test set and prepare it exactly as the pipeline prepared the
+    other files (pipeline step 7, "How to load"): strip the column names,
+    round to 2 decimals, drop the 7 columns, scale with the saved scaler.
+    """
+    df = pd.read_csv(path)
+    df.columns = df.columns.str.strip()
+    when = pd.to_datetime(df["DATETIME"], format="%d/%m/%y %H")
+
+    missing = [c for c in scaler.names if c not in df.columns]
+    if len(missing) > 0:
+        raise ValueError(f"{path}: missing feature columns {missing}")
+
     # float64 for the rounding itself, so 2.975 does not round by float32 noise.
-    if round_decimals is not None:
-        X = np.round(X.astype(np.float64), round_decimals).astype(np.float32)
-
-    # (audit "Value ranges"): the L_T6 ceiling at 5.5 and the single
-    # negative flow (F_PU7 = -0.88, inside a labeled attack) are left as they
-    # are. Neither is treated as an error, so nothing is clipped or repaired.
-
-    flags = df["ATT_FLAG"].to_numpy() if "ATT_FLAG" in df.columns else None
-    return when.to_numpy(), features, X, flags
+    X = np.round(df[scaler.names].to_numpy(np.float64), 2)
+    X = scaler.transform(X)
+    check_table(path, when, scaler.names, X)
+    return when.to_numpy(), X
 
 
 # Labels.
@@ -88,9 +125,10 @@ def make_labels(when, flags, label_rule="file", attack_windows=None):
     """
     Per-hour labels (1 attack, 0 normal, UNKNOWN) and per-hour attack ids.
 
-    (audit issues 2 and 3, proposal label-sensitivity experiment):
-    -999 means "not known", never "normal", and Dataset 2 has no 0 rows at all.
-    So the rule is an explicit argument, one per proposal label rule:
+    (audit issues 2 and 3, proposal label-sensitivity experiment, pipeline
+    open item 1): -999 means "not known", never "normal", and Dataset 2 has no
+    0 rows at all. The processed files keep the raw ATT_FLAG, so the rule is
+    applied here, as an explicit argument, one per proposal label rule:
       "file"                -999 -> UNKNOWN. Only confirmed labels (rule 2).
       "schedule"            1 inside the real attack windows, else 0 (rule 3).
                             The 0s are ASSUMED normal: they rest on the site's
@@ -124,62 +162,46 @@ def make_labels(when, flags, label_rule="file", attack_windows=None):
 
 
 # Scaling.
-class TrainOnlyScaler:
-    """Min-max scaling whose statistics come from the training block only."""
-    def __init__(
-            self,
-            feature_names,
-            feature_range=(0.0, 1.0),
-            constant_policy="drop"):
-        if constant_policy not in ("drop", "keep"):
-            raise ValueError(f"unknown constant_policy {constant_policy!r}")
+class ProcessedScaler:
+    """
+    The scaler Pipeline.ipynb fitted and saved (pipeline step 3), in the form
+    the training and evaluation scripts expect.
+
+    (proposal Milestone 1, pipeline step 3): it is a MinMaxScaler fitted on the
+    continuous Training columns only, to the range 0 to 1. Nothing is fitted
+    here. The on/off columns were never scaled, so they get min 0 and span 1.
+    """
+    def __init__(self, scaler_path, feature_names):
+        fitted = joblib.load(scaler_path)
         self.names = list(feature_names)
-        self.lo, self.hi = feature_range
-        self.constant_policy = constant_policy
         self.binary = np.array([c.startswith("S_") for c in self.names])
 
-    def fit(self, X_train):
-        # (proposal Milestone 1, audit issue 6): min and max come from
-        # the training block only. Validation, calibration, Dataset 2 and the
-        # Test set never touch them, so no future information leaks in.
-        self.min_ = X_train.min(axis=0)
-        span = X_train.max(axis=0) - self.min_
-        constant = span == 0
+        continuous = [c for c in self.names if not c.startswith("S_")]
+        fitted_on = list(getattr(fitted, "feature_names_in_", continuous))
+        if fitted_on != continuous:
+            raise ValueError(
+                f"{scaler_path}: the scaler was fitted on different columns than "
+                f"the continuous columns of the processed files")
 
-        # (audit issue 1, exploration decisions 1-2): 7 columns never
-        # change in training, so they have no range to scale by.
-        #   "drop": (default) remove them. Simple, but the model can then
-        #           never see pump 3, 5 or 9 switch on.
-        #   "keep": leave them in. Pumps 6 and 11 are almost never on
-        #           in Dataset 1 and 93-97% of their Dataset 2 running hours are
-        #           inside attacks (exploration step 2), so "a pump that never
-        #           runs starts running" is exactly the signal worth keeping.
-        #           A constant flow borrows the median range of the flows that
-        #           do move, so if it ever runs it lands near the same scale as
-        #           its siblings instead of at a raw value like 119.
-        for j in np.flatnonzero(constant & ~self.binary):
-            family = self.names[j].split("_")[0]          # "F", "L" or "P"
-            same = np.array([c.split("_")[0] == family for c in self.names])
-            donors = span[same & ~constant & ~self.binary]
-            span[j] = np.median(donors) if len(donors) else 1.0
+        self.min_ = np.zeros(len(self.names), dtype=np.float64)
+        self.span_ = np.ones(len(self.names), dtype=np.float64)
+        self.min_[~self.binary] = fitted.data_min_
+        self.span_[~self.binary] = fitted.data_range_
 
-        # (proposal Milestone 1): on/off columns are already 0/1, so they are
-        # not scaled. Only the continuous features are.
-        span[self.binary] = 1.0
-        self.min_[self.binary] = 0.0
-        self.span_ = span
-        self.constant_ = [n for n, c in zip(self.names, constant) if c]
-        self.keep_ = ~constant if self.constant_policy == "drop" \
-            else np.ones(len(self.names), dtype=bool)
-        self.out_names_ = [n for n, k in zip(self.names, self.keep_) if k]
-        return self
+        self.lo, self.hi = fitted.feature_range
+        self.constant_policy = "drop"
+        self.constant_ = list(DROPPED_COLUMNS)
+        # Every column in the processed files is kept: the 7 constant columns
+        # are already gone.
+        self.keep_ = np.ones(len(self.names), dtype=bool)
+        self.out_names_ = list(self.names)
 
     def transform(self, X):
-        # (audit "Value ranges"): no clipping. L_T1 and P_J415 exceed
-        # the training maximum in later files; a value outside the range the
+        # (audit "Value ranges", pipeline step 4): no clipping. Dataset 2 runs
+        # from about -1.28 to 2.86 after scaling; a value outside the range the
         # model learned is evidence of an anomaly, and clipping would erase it.
         Z = self.lo + (X - self.min_) / self.span_ * (self.hi - self.lo)
-        return Z[:, self.keep_].astype(np.float32)
+        return Z.astype(np.float32)
 
 
 # Dataset.
@@ -197,17 +219,16 @@ class BATADAL_Dataset(Dataset):
             window=24,
             stride=1,
             row_offset=0):
-        # (exploration step 4, decision 6): window is an argument, not
-        # a constant. 12 and 24 are the proposal's values, but tank 1 cycles
-        # about every 2 days, so 48 should be tried without touching this file.
+        # (pipeline open item 3, exploration step 4): window is an argument,
+        # not a constant. 12 and 24 are the proposal's values.
         first = window - 1
         if len(X) <= first:
             raise ValueError(f"block has {len(X)} rows, too few for window {window}")
 
-        # Unlike the template, nothing is padded and there is no start token:
-        # every window is full length. The first W-1 hours of a file therefore
-        # get no score, which costs nothing here (audit: every row of Dataset 2
-        # before 2016-09-14 is unlabeled, and attack 1 starts in mid-September).
+        # Nothing is padded and there is no start token: every window is full
+        # length. The first W-1 hours of a file therefore get no score, which
+        # costs nothing here (audit: every row of Dataset 2 before 2016-09-14
+        # is unlabeled, and attack 1 starts in mid-September).
         self.X = torch.from_numpy(np.ascontiguousarray(X))
         self.labels = torch.from_numpy(labels)
         self.window = window
@@ -235,88 +256,129 @@ class BATADAL_Dataset(Dataset):
 
 # Dataset Loader.
 def build_dataloaders(
-        dataset1_path,
+        processed_dir,
         dataset2_path=None,
         test_path=None,
         unlock_test=False,
         window=24,
         batch_size=128,
         train_stride=1,
-        split=(0.6, 0.2, 0.2),
-        gap_hours=24,
         feature_range=(0.0, 1.0),
         constant_policy="drop",
-        round_decimals=2,
         label_rule="schedule",
         attack_windows_dataset2=ATTACK_WINDOWS_DATASET2,
         seed=0,
         num_workers=0):
-    """Returns (loaders, scaler, info). loaders has train/val/calib and,
-    when the paths are given, dev (Dataset 2) and test."""
-    # (proposal Milestone 1): the gap between blocks must cover a whole window.
-    # With a shorter gap, the first validation or calibration windows would be
-    # scored right next to hours the model trained on.
-    if gap_hours < window:
-        raise ValueError(f"gap_hours ({gap_hours}) must be at least window ({window})")
+    """
+    Returns (loaders, scaler, info). loaders has train/val/calib and, when the
+    paths are given, dev (Dataset 2) and test.
 
-    when1, names, X1, flags1 = load_batadal_csv(dataset1_path, round_decimals)
+    processed_dir   the folder Pipeline.ipynb writes (data/processed/).
+    dataset2_path   the processed Dataset 2 file (dataset2_scaled.csv).
+    test_path       the RAW Test set CSV; it is prepared here with the saved
+                    scaler, and only with unlock_test=True.
+    """
+    processed_dir = str(processed_dir)
+    if not os.path.isdir(processed_dir):
+        raise ValueError(
+            f"{processed_dir}: expected the folder of processed files written by "
+            f"Pipeline.ipynb (data/processed/), not a single CSV file")
 
-    # (audit "Labels"): Dataset 1 must be entirely ATT_FLAG = 0. This
-    # stops a partly labeled file (-999 or 1) being used as "normal" training
-    # data by mistake.
-    if flags1 is None or not (flags1 == 0).all():
-        raise ValueError(f"{dataset1_path}: training data must be all ATT_FLAG = 0")
+    # (pipeline decisions 1-3): rounding, the dropped columns and the 0 to 1
+    # range are fixed by the shared pipeline and cannot be changed from here.
+    # These two arguments are kept so a different request fails loudly instead
+    # of silently getting the pipeline's data.
+    if tuple(feature_range) != (0.0, 1.0):
+        raise ValueError(
+            f"feature_range={tuple(feature_range)}: the processed files are scaled "
+            f"to 0 to 1 (pipeline decision 3). Change it in Pipeline.ipynb.")
+    if constant_policy != "drop":
+        raise ValueError(
+            f"constant_policy={constant_policy!r}: the processed files have the 7 "
+            f"never-changing columns dropped (pipeline decision 2).")
 
-    # (proposal Milestone 1, exploration step 1): chronological
-    # 60/20/20 split into train / validation / calibration. The drift check
-    # found shifts under 0.1 SD and spread ratios of 0.94-1.01 across exactly
-    # these blocks, so there is no reason to move the cut points. No shuffling
-    # across blocks: that would leak neighbouring hours between them.
-    n = len(X1)
-    a, b = int(n * split[0]), int(n * (split[0] + split[1]))
-
-    # (proposal): a 24 h gap after each cut, and windows are built
-    # inside each block, so no window straddles two blocks and no validation
-    # window overlaps hours the model trained on.
-    blocks = {"train": (0, a), "val": (a + gap_hours, b), "calib": (b + gap_hours, n)}
-
-    scaler = TrainOnlyScaler(names, feature_range, constant_policy).fit(X1[:a])
-
-    labels1, _ = make_labels(when1, flags1)
-    datasets = {}
-    for name, (s, e) in blocks.items():
-        datasets[name] = BATADAL_Dataset(
-            scaler.transform(X1[s:e]), labels1[s:e], window,
-            train_stride if name == "train" else 1, row_offset=s)
-
-    def add_file(name, path, rule, attack_windows):
-        when, names_k, X, flags = load_batadal_csv(path, round_decimals)
+    # (pipeline step 2): the three blocks of Dataset 1, already split by time
+    # 60/20/20 with a 24-hour gap after each cut.
+    tables = {}
+    for name, file_name in PROCESSED_FILES.items():
+        tables[name] = load_processed_csv(os.path.join(processed_dir, file_name))
+    names = tables["train"][1]
+    for name, (_, names_k, _, flags) in tables.items():
         if names_k != names:
-            raise ValueError(f"{path}: feature columns differ from Dataset 1")
-        labels, attack_id = make_labels(when, flags, rule, attack_windows)
-        # Evaluation always uses stride 1: one score per hour.
-        datasets[name] = BATADAL_Dataset(scaler.transform(X), labels, window, 1)
-        info[name] = {"datetime": when, "labels": labels, "attack_id": attack_id}
+            raise ValueError(f"{PROCESSED_FILES[name]}: feature columns differ from the Training file")
+        # (audit "Labels"): Dataset 1 must be entirely ATT_FLAG = 0. This
+        # stops a partly labeled file (-999 or 1) being used as "normal" data
+        # by mistake.
+        if not (flags == 0).all():
+            raise ValueError(f"{PROCESSED_FILES[name]}: Dataset 1 blocks must be all ATT_FLAG = 0")
+
+    # (pipeline step 3): check the Training file really is the scaled one.
+    # After fitting, every continuous Training column runs from 0 to 1.
+    continuous = np.array([not c.startswith("S_") for c in names])
+    train_X = tables["train"][2]
+    if not (np.allclose(train_X[:, continuous].min(axis=0), 0.0, atol=1e-6)
+            and np.allclose(train_X[:, continuous].max(axis=0), 1.0, atol=1e-6)):
+        raise ValueError(f"{PROCESSED_FILES['train']}: continuous columns do not run "
+                         f"from 0 to 1, so this is not the scaled Training file")
+
+    scaler = ProcessedScaler(os.path.join(processed_dir, SCALER_FILE), names)
+
+    # Row positions in Dataset 1, from the dates, so `row` means the same as
+    # it would in the raw file (hours since the first Training hour).
+    first_hour = tables["train"][0][0]
+    blocks = {}
+    for name, (when, _, X, _) in tables.items():
+        start = int((when[0] - first_hour) / np.timedelta64(1, "h"))
+        blocks[name] = (start, start + len(X))
+
+    # (proposal Milestone 1, pipeline step 2): the gap between blocks must
+    # cover a whole window. With a shorter gap, the first validation or
+    # calibration windows would be scored right next to hours the model
+    # trained on.
+    for before, after in (("train", "val"), ("val", "calib")):
+        gap_hours = blocks[after][0] - blocks[before][1]
+        if gap_hours < window:
+            raise ValueError(
+                f"the gap between the {before} and {after} blocks is {gap_hours} hours, "
+                f"shorter than the window ({window})")
+
+    datasets = {}
+    for name, (when, _, X, flags) in tables.items():
+        labels, _ = make_labels(when, flags)
+        datasets[name] = BATADAL_Dataset(
+            X, labels, window,
+            train_stride if name == "train" else 1, row_offset=blocks[name][0])
 
     info = {"feature_names": scaler.out_names_, "in_dim": len(scaler.out_names_),
             "constant_in_train": scaler.constant_, "blocks": blocks,
-            "datetime_dataset1": when1}
+            "datetime_blocks": {name: table[0] for name, table in tables.items()}}
 
-    # (exploration open items): Dataset 2 is never used to fit the
-    # scaler or the model. It is a development set for label experiments and
-    # for checking that errors rise during the 7 attacks.
+    # (pipeline step 4, exploration open items): Dataset 2 was scaled with the
+    # Training scaler and is never used to fit anything. It is a development
+    # set for label experiments and for checking that errors rise during the
+    # 7 attacks.
     if dataset2_path is not None:
-        add_file("dev", dataset2_path, label_rule, attack_windows_dataset2)
+        when, names_k, X, flags = load_processed_csv(str(dataset2_path))
+        if names_k != names:
+            raise ValueError(f"{dataset2_path}: feature columns differ from the Training file")
+        labels, attack_id = make_labels(when, flags, label_rule, attack_windows_dataset2)
+        # Evaluation always uses stride 1: one score per hour.
+        datasets["dev"] = BATADAL_Dataset(X, labels, window, 1)
+        info["dev"] = {"datetime": when, "labels": labels, "attack_id": attack_id}
 
-    # (audit issue 6): the Test set stays untouched until every model
-    # choice and threshold is frozen, so loading it takes a deliberate flag.
-    # It has no ATT_FLAG and its attack list was not audited: labels are UNKNOWN
-    # unless you pass the site's windows yourself at final evaluation.
+    # (audit issue 6, pipeline step 7): the Test set stays untouched until
+    # every model choice and threshold is frozen, so loading it takes a
+    # deliberate flag. The pipeline does not save a scaled Test file; the raw
+    # file is prepared here with the saved scaler. It has no ATT_FLAG and its
+    # attack list was not audited, so its labels are UNKNOWN.
     if test_path is not None:
         if not unlock_test:
             raise PermissionError("Test set is locked. Pass unlock_test=True only "
                                   "after all choices and thresholds are frozen.")
-        add_file("test", test_path, "file", None)
+        when, X = load_raw_test_csv(str(test_path), scaler)
+        labels, attack_id = make_labels(when, None, "file", None)
+        datasets["test"] = BATADAL_Dataset(X, labels, window, 1)
+        info["test"] = {"datetime": when, "labels": labels, "attack_id": attack_id}
 
     # (proposal "three random seeds"): only the training loader
     # shuffles, with its own seeded generator, so each seed gives a
@@ -332,11 +394,11 @@ def build_dataloaders(
 
 if __name__ == "__main__":
     import sys
-    # python batadal_dataset.py "data/Training dataset 1.csv" "data/Training dataset 2.csv"
+    # python batadal_dataset.py data/processed data/processed/dataset2_scaled.csv
     loaders, scaler, info = build_dataloaders(
         sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
-    print(f"features: {info['in_dim']} | constant in training: "
-          f"{', '.join(info['constant_in_train']) or 'none'}")
+    print(f"features: {info['in_dim']} | dropped by the pipeline: "
+          f"{', '.join(info['constant_in_train'])}")
     for name, loader in loaders.items():
         x, target, label, row = next(iter(loader))
         print(f"{name:5s} | windows {len(loader.dataset):5d} | input {tuple(x.shape)} "
