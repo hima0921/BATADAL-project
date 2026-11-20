@@ -23,11 +23,11 @@ class Transformer_Recon_Model(nn.Module):
             kwargs["embedding_dim"],
             dropout=kwargs["dropout"])
 
-        # Encooder's learnable representation embeddings.
-        self.num_encodings = kwargs["num_encodings"]
+        # Encoder's learnable representation embeddings (Compact latent representations).
+        self.num_latent_tokens = kwargs["num_latent_tokens"]
         self.encoders_embeddings = nn.parameter.Parameter(
             torch.randn(
-                self.num_encodings,
+                self.num_latent_tokens,
                 kwargs["embedding_dim"]))  # (Seq_enc,Dim_emb)
 
         # Transforms BATADAL vector dimension into embedding dimension.
@@ -72,7 +72,7 @@ class Transformer_Recon_Model(nn.Module):
             LinearBlock(
                 use_activation=True,
                 in_dim=kwargs["hidden_dim"],
-                out_dim=kwargs["bottleneck_dim"],  # Encoder's Bottleneck dim.
+                out_dim=kwargs["latent_dim"],  # Encoder's Bottleneck dim.
                 activation_type="tanh")  # Output layer ranges between [-1,1]
         )  # (Batch,Seq_window,Dim_emb)
 
@@ -93,7 +93,7 @@ class Transformer_Recon_Model(nn.Module):
                     heads=kwargs["num_heads"],
                     embedding_dim=kwargs["embedding_dim"],
                     hidden_dim=kwargs["hidden_dim"],
-                    context_dim=kwargs["bottleneck_dim"],
+                    context_dim=kwargs["latent_dim"],
                     dropout=kwargs["dropout"],
                     activation_type=kwargs["activation_type"]))  # (Batch,Seq_window,Dim_emb)
 
@@ -123,7 +123,7 @@ class Transformer_Recon_Model(nn.Module):
         for encoder_transformer_block in self.encoder_transformer_blocks:
             x = encoder_transformer_block(x)
 
-        x_enc = x[:, :self.num_encodings, :]
+        x_enc = x[:, :self.num_latent_tokens, :]
         x_enc = self.final_encoder_linear_block(x_enc)
         return x_enc
 
@@ -142,3 +142,11 @@ class Transformer_Recon_Model(nn.Module):
         x_dec = self.forward_decoder(x_enc)
         return x_dec
 
+if __name__ == "__main__":
+    # Simple test.
+    cfg = dict(in_dim=36, embedding_dim=64, hidden_dim=128, num_heads=8,
+           num_latent_tokens=4, latent_dim=16, num_window=24,
+           num_enc_blocks=2, num_dec_blocks=2, dropout=0.1, activation_type="gelu")
+    m = Transformer_Recon_Model(**cfg)
+    x = torch.rand(8, 24, 36)
+    print(m.forward_encoder(x).shape, m(x).shape)   # (8, 4, 16) and (8, 24, 36)

@@ -35,7 +35,7 @@ The row counts are from `docs/pipeline.md`. With the 12-hour window the counts a
 | Constant columns | Dropped (36 features) | `Pipeline.ipynb` |
 | Rounding | 2 decimals | `Pipeline.ipynb` |
 | Label rule for Dataset 2 | Real attack windows (`schedule`) | Loader |
-| Bottleneck | 4 tokens of 16 values | Config file (`num_encodings`, `bottleneck_dim`) |
+| Bottleneck | 4 tokens of 16 values | Config file (`num_latent_tokens`, `latent_dim`) |
 | Training length | 15,000 steps | Config file |
 | Learning rate | 3e-3, halved every 3,500 steps (default) | Config and `--lr-steps`, `--lr-gamma` |
 | Dropout | 0.1 | Config file |
@@ -127,7 +127,7 @@ The first four choices below (rounding, constant columns, split, scaling) are ma
 
 - **A Transformer autoencoder with four learnable bottleneck tokens and a decoder of 24 learned queries.** The settings come from the config file.
 - Literature: learnable tokens that summarize a sequence go back to BERT's classification token [8]. Using several of them as an autoencoder bottleneck appears in Salici et al. for time series [11] and in TiTok for images [16]. Learned decoder queries with cross-attention come from DETR [10] and Perceiver IO [12]. Pintilie et al. show why a bottleneck matters: without one, a Transformer decoder can reconstruct too easily to learn a useful representation [14].
-- **The bottleneck is 4 tokens of 16 values each, so a window is compressed to 64 numbers.** Both sizes are settings in the config file: `num_encodings` for the number of tokens and `bottleneck_dim` for the values per token. Both are saved in the checkpoint.
+- **The bottleneck is 4 tokens of 16 values each, so a window is compressed to 64 numbers.** Both sizes are settings in the config file: `num_latent_tokens` for the number of tokens and `latent_dim` for the values per token. Both are saved in the checkpoint.
 - **The output layer is a sigmoid, so every reconstructed value lies between 0 and 1.** This matches the scaling range. The bottleneck values pass through `tanh` and lie between -1 and 1; that range is internal to the model and unrelated to the data scaling.
 - **GELU activation, layer normalization before each block, sinusoidal positions.** GELU follows BERT and ViT [8][9]. Normalizing before each block follows ViT [9]. The positional encoding is the original Transformer's [7].
 
@@ -178,7 +178,7 @@ The calibration block, Dataset 2 and the Test set. Thresholds and evaluation com
 5. **Models trained before the switch to the shared data.** The earlier loader read the raw CSVs and rounded them itself, after converting to float32. A value such as 2.985000002 then rounded to 2.98 where the pipeline gives 2.99. In a test on made-up data this changed 11 of about 250,000 Dataset 1 cells; Dataset 2 was not affected. The count on the real data is not known. Existing checkpoints were therefore trained on very slightly different values. Decision needed: accept them, or retrain on the processed files.
 6. **No warm-up and no weight decay.** The original Transformer uses warm-up [7]. Whether adding either helps here is untested.
 7. **Model selection by reconstruction loss.** See the limit in section 4. A check on Dataset 2 is needed before a checkpoint is treated as final.
-8. **Small `bottleneck_dim` values do not work as intended.** The decoder applies layer normalization to each bottleneck token, which removes its mean and scale. A token of 1 value then carries nothing and a token of 2 carries one bit. In general a token carries about two fewer free values than its size. Keep `bottleneck_dim` at 4 or above.
+8. **Small `latent_dim` values do not work as intended.** The decoder applies layer normalization to each bottleneck token, which removes its mean and scale. A token of 1 value then carries nothing and a token of 2 carries one bit. In general a token carries about two fewer free values than its size. Keep `latent_dim` at 4 or above.
 9. **Windows longer than 24 hours.** The gaps in the processed files are 24 hours, so a 48-hour window is rejected. Trying one needs a change in `Pipeline.ipynb`.
 10. **Comparability with our earlier runs.** The proof of concept scaled the data to -1 to 1 with a `tanh` output. Halving the range divides squared error by four, so losses from the current code are about four times smaller for the same reconstruction quality. Loss values from before and after the change cannot be compared directly.
 11. **Comparability with published BATADAL results.** Scores in [3] and [4] use different label handling and thresholds chosen with knowledge of the attacks. Nemade et al. pick the threshold that maximizes F1 on the labeled series, and train their autoencoder on the same series it is scored on [4]. Ours is trained on Dataset 1 only and its threshold comes from normal data under a false-alarm budget, so lower scores are expected.

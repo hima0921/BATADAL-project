@@ -126,13 +126,12 @@ def main():
 
     parser = argparse.ArgumentParser(
         description=f"{project_name}")
-
     parser.add_argument(
         "--device",
         help="Which hardware device will model run on.",
         choices=['cpu', 'cuda'],
         type=str,
-        default="cpu")
+        default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument(
         "--dataset-path",
         help="File path for the normal BATADAL training CSV (Training dataset 1).",
@@ -232,8 +231,8 @@ def main():
     activation_type = config_dict["activation_type"]
 
     # Bottleneck parameters.
-    num_encodings = config_dict["num_encodings"]
-    bottleneck_dim = config_dict["bottleneck_dim"]
+    num_latent_tokens = config_dict["num_latent_tokens"]
+    latent_dim = config_dict["latent_dim"]
 
     # BATADAL Datasets: Dataset 1 split 60/20/20 by time, with 24-hour gaps.
     # feature_range uses (0, 1) as per the proposal.
@@ -268,11 +267,11 @@ def main():
         embedding_dim=embedding_dim,
         hidden_dim=hidden_dim,
         num_heads=num_heads,
-        num_encodings=num_encodings,
+        num_latent_tokens=num_latent_tokens,
         num_window=window,
         num_enc_blocks=num_enc_blocks,
         num_dec_blocks=num_dec_blocks,
-        bottleneck_dim=bottleneck_dim,
+        latent_dim=latent_dim,
         dropout=dropout,
         activation_type=activation_type)
 
@@ -358,8 +357,8 @@ def main():
     logging.info("-" * 100)
     logging.info(f"Num Encoder Blocks: {num_enc_blocks:,}")
     logging.info(f"Num Decoder Blocks: {num_dec_blocks:,}")
-    logging.info(f"Num Encodings: {num_encodings:,}")
-    logging.info(f"Bottleneck dim: {bottleneck_dim:,}")
+    logging.info(f"Num Encodings: {num_latent_tokens:,}")
+    logging.info(f"Bottleneck dim: {latent_dim:,}")
     logging.info(f"Activation Type: {activation_type}")
     logging.info(f"Hidden Dimension: {hidden_dim:,}")
     logging.info(f"Embedding Dimension: {embedding_dim:,}")
@@ -387,8 +386,8 @@ def main():
         "batch_size": batch_size,
         "hidden_dim": hidden_dim,
         "embedding_dim": embedding_dim,
-        "num_encodings": num_encodings,
-        "bottleneck_dim": bottleneck_dim,
+        "num_latent_tokens": num_latent_tokens,
+        "latent_dim": latent_dim,
         "num_enc_blocks": num_enc_blocks,
         "num_dec_blocks": num_dec_blocks,
         "activation_type": activation_type,

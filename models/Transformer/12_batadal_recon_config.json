@@ -8,7 +8,7 @@
     "num_dec_blocks": 2,
     "hidden_dim": 128,
     "embedding_dim": 64,
-    "num_encodings": 4,
-    "bottleneck_dim": 16,
+    "num_latent_tokens": 4,
+    "latent_dim": 16,
     "activation_type": "gelu"
 }
