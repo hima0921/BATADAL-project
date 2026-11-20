@@ -3,12 +3,12 @@ BATADAL data loader pipeline (PyTorch).
 
 Reads the shared, already-prepared data that notebooks/Pipeline.ipynb saves in
 data/processed/ (see docs/pipeline.md), so every model uses one version of the
-data. Rounding, dropping the 7 never-changing columns, the 60/20/20 split and
-the scaling are done by that notebook, not here.
+data. Rounding, dropping the 7 never-changing columns, the 60/20/20 split, the
+scaling and the Dataset 2 labels are all done by that notebook, not here.
 
     from batadal_dataset import build_dataloaders
     loaders, scaler, info = build_dataloaders(
-        "data/processed", "data/processed/dataset2_scaled.csv", window=24)
+        "data/processed", "data/processed/dataset2_eval.csv", window=24)
     for x, target, label, row in loaders["train"]:
         ...
 """
@@ -21,14 +21,20 @@ import joblib
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-UNKNOWN = -1          # Label for "not known" (file value -999, or no label column)
+# (proposal, exploration step 4): the Transformer read 12-hour and
+# 24-hour windows. The pipeline's 24-hour gaps were sized for these two.
+ALLOWED_WINDOWS = (12, 24)
 
-# (pipeline step 7): the files Pipeline.ipynb writes to data/processed/.
+# Only the Test set uses this. It has no label column at all, and 0 would read
+# as "normal". Dataset 1 and Dataset 2 never get this value.
+NO_LABEL = -1
+
+# (pipeline step 7 and notebook step 8): the files Pipeline.ipynb writes.
 PROCESSED_FILES = {
     "train": "train_scaled.csv",
     "val": "val_scaled.csv",
     "calib": "cal_scaled.csv"}
-DATASET2_FILE = "dataset2_scaled.csv"
+DATASET2_FILE = "dataset2_eval.csv"
 SCALER_FILE = "scaler.joblib"
 
 # (pipeline step 0b, audit issue 1): the 7 columns that never change in
@@ -37,19 +43,10 @@ SCALER_FILE = "scaler.joblib"
 # Test set at the end.
 DROPPED_COLUMNS = ["S_PU1", "F_PU3", "S_PU3", "F_PU5", "S_PU5", "F_PU9", "S_PU9"]
 
-# (audit s3 "Attack periods", issue 4): the 7 REAL attack windows of
-# Dataset 2 from the BATADAL site, not the file labels. The file labels cover
-# only 219 of 492 attack hours and start up to 24 h late. Both ends inclusive,
-# which reproduces the site's hour counts (50, 24, 60, 94, 60, 94, 110).
-ATTACK_WINDOWS_DATASET2 = [
-    (1, "2016-09-13 23:00", "2016-09-16 00:00"),
-    (2, "2016-09-26 11:00", "2016-09-27 10:00"),
-    (3, "2016-10-09 09:00", "2016-10-11 20:00"),
-    (4, "2016-10-29 19:00", "2016-11-02 16:00"),
-    (5, "2016-11-26 17:00", "2016-11-29 04:00"),
-    (6, "2016-12-06 07:00", "2016-12-10 04:00"),
-    (7, "2016-12-14 15:00", "2016-12-19 04:00"),
-]
+# (notebook step 8): the two label columns of dataset2_eval.csv. They are the
+# answer key, so they must never be read as features.
+LABEL_COLUMNS = ["label", "attack_id"]
+NOT_FEATURES = ["DATETIME", "ATT_FLAG"] + LABEL_COLUMNS
 
 
 # Loading and Validation.
@@ -57,7 +54,7 @@ def check_table(path, when, features, X):
     """Checks shared by the processed files and the raw Test set."""
     # (audit "Time"): rows must be strictly hourly inside a file. The audit
     # found no gaps or repeats; this fails loudly if a file breaks that,
-    # because a window across a gap is not 24 real hours.
+    # because a window across a gap is not 12 or 24 real hours.
     if not (when.diff().dropna() == pd.Timedelta(hours=1)).all():
         raise ValueError(f"{path}: rows are not strictly hourly")
 
@@ -70,11 +67,35 @@ def check_table(path, when, features, X):
         raise ValueError(f"{path}: an S_ column has values other than 0 and 1")
 
 
-def load_processed_csv(path):
+def check_labels(path, flags, labels, attack_id):
+    """
+    Checks on the label columns of dataset2_eval.csv (notebook step 8).
+
+    The labels are read from the file, not rebuilt here, so these checks are
+    what stops a damaged or hand-edited file from being scored against.
+    """
+    if not np.isin(labels, (0, 1)).all():
+        raise ValueError(f"{path}: label has values other than 0 and 1")
+    if attack_id.min() < 0:
+        raise ValueError(f"{path}: attack_id has negative values")
+    # An hour is an attack hour exactly when it belongs to one of the attacks.
+    if not ((labels == 1) == (attack_id > 0)).all():
+        raise ValueError(f"{path}: label and attack_id disagree")
+    # (audit "Attack periods"): every labeled run in the file sits inside a
+    # real attack window, so an hour the file marks 1 can never be label 0.
+    if not (labels[flags == 1] == 1).all():
+        raise ValueError(f"{path}: an hour with ATT_FLAG = 1 has label 0")
+
+
+def load_processed_csv(path, with_labels=False):
     """
     Read one file written by Pipeline.ipynb. Returns
-    (datetimes, feature_names, X, raw_flags). The values are already rounded,
-    scaled and without the 7 dropped columns, so nothing is changed here.
+    (datetimes, feature_names, X, raw_flags, labels, attack_id). The values are
+    already rounded, scaled and without the 7 dropped columns, so nothing is
+    changed here.
+
+    with_labels=False  a Dataset 1 block. labels and attack_id come back None.
+    with_labels=True   dataset2_eval.csv, which carries label and attack_id.
     """
     # (pipeline step 7): the processed files store DATETIME as text like
     # "2014-01-06 00:00:00". It is parsed after the column check below, so a
@@ -87,16 +108,37 @@ def load_processed_csv(path):
             f"{path}: this does not look like a processed file from Pipeline.ipynb "
             f"(it should have ATT_FLAG and none of the 7 dropped columns). "
             f"Pass the files in data/processed/, not the raw CSVs.")
+
+    has_labels = [c for c in LABEL_COLUMNS if c in df.columns]
+    if with_labels and has_labels != LABEL_COLUMNS:
+        raise ValueError(
+            f"{path}: no label and attack_id columns. Pass {DATASET2_FILE} "
+            f"(notebook step 8), not dataset2_scaled.csv.")
+    if not with_labels and len(has_labels) > 0:
+        raise ValueError(
+            f"{path}: a Dataset 1 block should not have the columns {has_labels}")
+
     when = pd.to_datetime(df["DATETIME"], format="%Y-%m-%d %H:%M:%S")
 
-    features = [c for c in df.columns if c not in ("DATETIME", "ATT_FLAG")]
+    # The label columns are left out of the features here. This is the line
+    # that keeps the answer key away from the models.
+    features = [c for c in df.columns if c not in NOT_FEATURES]
 
     # (audit "Data types"): cast everything to float32 so dtype never depends
     # on which file was read. The rounding was already done by the pipeline,
     # in float64, before these values were saved.
     X = df[features].to_numpy(np.float32)
+
+    # Validation step occurs here, in case values are changed in the csv.
     check_table(path, when, features, X)
-    return when.to_numpy(), features, X, df["ATT_FLAG"].to_numpy()
+
+    flags = df["ATT_FLAG"].to_numpy()
+    labels = attack_id = None
+    if with_labels:
+        labels = df["label"].to_numpy(np.int64)
+        attack_id = df["attack_id"].to_numpy(np.int64)
+        check_labels(path, flags, labels, attack_id)
+    return when.to_numpy(), features, X, flags, labels, attack_id
 
 
 def load_raw_test_csv(path, scaler):
@@ -118,47 +160,6 @@ def load_raw_test_csv(path, scaler):
     X = scaler.transform(X)
     check_table(path, when, scaler.names, X)
     return when.to_numpy(), X
-
-
-# Labels.
-def make_labels(when, flags, label_rule="file", attack_windows=None):
-    """
-    Per-hour labels (1 attack, 0 normal, UNKNOWN) and per-hour attack ids.
-
-    (audit issues 2 and 3, proposal label-sensitivity experiment, pipeline
-    open item 1): -999 means "not known", never "normal", and Dataset 2 has no
-    0 rows at all. The processed files keep the raw ATT_FLAG, so the rule is
-    applied here, as an explicit argument, one per proposal label rule:
-      "file"                -999 -> UNKNOWN. Only confirmed labels (rule 2).
-      "schedule"            1 inside the real attack windows, else 0 (rule 3).
-                            The 0s are ASSUMED normal: they rest on the site's
-                            list being complete.
-      "unlabeled_as_normal" -999 -> 0. The deliberately flawed control (rule 1):
-                            it turns about 273 real attack hours into "normal".
-    """
-    n = len(when)
-    attack_id = np.zeros(n, dtype=np.int64)
-    for aid, start, end in attack_windows or []:
-        inside = (when >= np.datetime64(start)) & (when <= np.datetime64(end))
-        attack_id[inside] = aid
-
-    if label_rule == "schedule":
-        if not attack_windows:
-            raise ValueError("label_rule='schedule' needs attack_windows")
-        labels = (attack_id > 0).astype(np.int64)
-    elif flags is None:                       # Test set: no ATT_FLAG column
-        labels = np.full(n, UNKNOWN, dtype=np.int64)
-    elif label_rule == "file":
-        labels = np.where(flags == 1, 1, np.where(flags == 0, 0, UNKNOWN))
-    elif label_rule == "unlabeled_as_normal":
-        labels = (flags == 1).astype(np.int64)
-    else:
-        raise ValueError(f"unknown label_rule {label_rule!r}")
-
-    # (audit issue 4): attack_id comes from the REAL windows under
-    # every rule, so detection delay can be measured from the real start. From
-    # the labeled start it would look up to 24 h shorter than it is (attack 4).
-    return labels.astype(np.int64), attack_id
 
 
 # Scaling.
@@ -219,16 +220,18 @@ class BATADAL_Dataset(Dataset):
             window=24,
             stride=1,
             row_offset=0):
-        # (pipeline open item 3, exploration step 4): window is an argument,
-        # not a constant. 12 and 24 are the proposal's values.
+        if window not in ALLOWED_WINDOWS:
+            raise ValueError(f"window={window}: use one of {ALLOWED_WINDOWS}")
         first = window - 1
         if len(X) <= first:
             raise ValueError(f"block has {len(X)} rows, too few for window {window}")
 
         # Nothing is padded and there is no start token: every window is full
-        # length. The first W-1 hours of a file therefore get no score, which
-        # costs nothing here (audit: every row of Dataset 2 before 2016-09-14
-        # is unlabeled, and attack 1 starts in mid-September).
+        # length, and no window crosses from one block or file into another.
+        # The first 11 or 23 hours of each block therefore get no score. In
+        # Dataset 2 that costs nothing (attack 1 starts on 2016-09-13, the file
+        # on 2016-07-04). For the Test set it has not been checked, because
+        # the Test set stays untouched.
         self.X = torch.from_numpy(np.ascontiguousarray(X))
         self.labels = torch.from_numpy(labels)
         self.window = window
@@ -265,8 +268,6 @@ def build_dataloaders(
         train_stride=1,
         feature_range=(0.0, 1.0),
         constant_policy="drop",
-        label_rule="schedule",
-        attack_windows_dataset2=ATTACK_WINDOWS_DATASET2,
         seed=0,
         num_workers=0):
     """
@@ -274,15 +275,20 @@ def build_dataloaders(
     paths are given, dev (Dataset 2) and test.
 
     processed_dir   the folder Pipeline.ipynb writes (data/processed/).
-    dataset2_path   the processed Dataset 2 file (dataset2_scaled.csv).
+    dataset2_path   dataset2_eval.csv: Dataset 2, scaled, with label and
+                    attack_id (notebook step 8).
     test_path       the RAW Test set CSV; it is prepared here with the saved
                     scaler, and only with unlock_test=True.
+    window          12 or 24 hours.
     """
     processed_dir = str(processed_dir)
     if not os.path.isdir(processed_dir):
         raise ValueError(
             f"{processed_dir}: expected the folder of processed files written by "
             f"Pipeline.ipynb (data/processed/), not a single CSV file")
+
+    if window not in ALLOWED_WINDOWS:
+        raise ValueError(f"window={window}: use one of {ALLOWED_WINDOWS}")
 
     # (pipeline decisions 1-3): rounding, the dropped columns and the 0 to 1
     # range are fixed by the shared pipeline and cannot be changed from here.
@@ -303,13 +309,13 @@ def build_dataloaders(
     for name, file_name in PROCESSED_FILES.items():
         tables[name] = load_processed_csv(os.path.join(processed_dir, file_name))
     names = tables["train"][1]
-    for name, (_, names_k, _, flags) in tables.items():
-        if names_k != names:
+    for name, table in tables.items():
+        if table[1] != names:
             raise ValueError(f"{PROCESSED_FILES[name]}: feature columns differ from the Training file")
         # (audit "Labels"): Dataset 1 must be entirely ATT_FLAG = 0. This
         # stops a partly labeled file (-999 or 1) being used as "normal" data
         # by mistake.
-        if not (flags == 0).all():
+        if not (table[3] == 0).all():
             raise ValueError(f"{PROCESSED_FILES[name]}: Dataset 1 blocks must be all ATT_FLAG = 0")
 
     # (pipeline step 3): check the Training file really is the scaled one.
@@ -327,14 +333,14 @@ def build_dataloaders(
     # it would in the raw file (hours since the first Training hour).
     first_hour = tables["train"][0][0]
     blocks = {}
-    for name, (when, _, X, _) in tables.items():
-        start = int((when[0] - first_hour) / np.timedelta64(1, "h"))
-        blocks[name] = (start, start + len(X))
+    for name, table in tables.items():
+        start = int((table[0][0] - first_hour) / np.timedelta64(1, "h"))
+        blocks[name] = (start, start + len(table[2]))
 
     # (proposal Milestone 1, pipeline step 2): the gap between blocks must
-    # cover a whole window. With a shorter gap, the first validation or
-    # calibration windows would be scored right next to hours the model
-    # trained on.
+    # cover a whole window, so the first validation or calibration windows are
+    # not scored right next to hours the model trained on. The pipeline's
+    # 24-hour gaps cover both allowed windows; this catches a changed split.
     for before, after in (("train", "val"), ("val", "calib")):
         gap_hours = blocks[after][0] - blocks[before][1]
         if gap_hours < window:
@@ -343,42 +349,53 @@ def build_dataloaders(
                 f"shorter than the window ({window})")
 
     datasets = {}
-    for name, (when, _, X, flags) in tables.items():
-        labels, _ = make_labels(when, flags)
+    for name, table in tables.items():
+        # All ATT_FLAG = 0 was checked above, so every Dataset 1 hour is 0.
+        labels = np.zeros(len(table[2]), dtype=np.int64)
         datasets[name] = BATADAL_Dataset(
-            X, labels, window,
+            table[2], labels, window,
             train_stride if name == "train" else 1, row_offset=blocks[name][0])
 
     info = {"feature_names": scaler.out_names_, "in_dim": len(scaler.out_names_),
             "constant_in_train": scaler.constant_, "blocks": blocks,
             "datetime_blocks": {name: table[0] for name, table in tables.items()}}
 
-    # (pipeline step 4, exploration open items): Dataset 2 was scaled with the
-    # Training scaler and is never used to fit anything. It is a development
-    # set for label experiments and for checking that errors rise during the
-    # 7 attacks.
+    # (pipeline step 4, notebook step 8): Dataset 2 was scaled with the
+    # Training scaler and is never used to fit anything. It is only for
+    # checking models.
+    #   label      1 inside the 7 real attack windows, 0 otherwise. The 0s are
+    #              ASSUMED normal: they rest on the site's list of 7 attacks
+    #              being complete (audit issue 2). They are not confirmed.
+    #   attack_id  1 to 7, or 0. Its first hour is the attack's REAL start, so
+    #              detection delay is measured from there (audit issue 4).
+    #   att_flag   the raw file label (-999 or 1), passed through untouched for
+    #              the label-sensitivity experiment. From att_flag and label:
+    #                unlabeled as normal    att_flag == 1
+    #                confirmed labels only  keep the hours where att_flag != -999
+    #                real attack windows    label
     if dataset2_path is not None:
-        when, names_k, X, flags = load_processed_csv(str(dataset2_path))
+        when, names_k, X, flags, labels, attack_id = load_processed_csv(
+            str(dataset2_path), with_labels=True)
         if names_k != names:
             raise ValueError(f"{dataset2_path}: feature columns differ from the Training file")
-        labels, attack_id = make_labels(when, flags, label_rule, attack_windows_dataset2)
         # Evaluation always uses stride 1: one score per hour.
         datasets["dev"] = BATADAL_Dataset(X, labels, window, 1)
-        info["dev"] = {"datetime": when, "labels": labels, "attack_id": attack_id}
+        info["dev"] = {"datetime": when, "labels": labels, "attack_id": attack_id,
+                       "att_flag": flags}
 
     # (audit issue 6, pipeline step 7): the Test set stays untouched until
     # every model choice and threshold is frozen, so loading it takes a
     # deliberate flag. The pipeline does not save a scaled Test file; the raw
     # file is prepared here with the saved scaler. It has no ATT_FLAG and its
-    # attack list was not audited, so its labels are UNKNOWN.
+    # attack list was not audited, so every hour gets NO_LABEL.
     if test_path is not None:
         if not unlock_test:
             raise PermissionError("Test set is locked. Pass unlock_test=True only "
                                   "after all choices and thresholds are frozen.")
         when, X = load_raw_test_csv(str(test_path), scaler)
-        labels, attack_id = make_labels(when, None, "file", None)
+        labels = np.full(len(X), NO_LABEL, dtype=np.int64)
         datasets["test"] = BATADAL_Dataset(X, labels, window, 1)
-        info["test"] = {"datetime": when, "labels": labels, "attack_id": attack_id}
+        info["test"] = {"datetime": when, "labels": labels}
 
     # (proposal "three random seeds"): only the training loader
     # shuffles, with its own seeded generator, so each seed gives a
@@ -394,12 +411,15 @@ def build_dataloaders(
 
 if __name__ == "__main__":
     import sys
-    # python batadal_dataset.py data/processed data/processed/dataset2_scaled.csv
+    # python batadal_dataset.py data/processed [window]
+    processed = sys.argv[1]
+    window = int(sys.argv[2]) if len(sys.argv) > 2 else 24
     loaders, scaler, info = build_dataloaders(
-        sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
+        processed, os.path.join(processed, DATASET2_FILE), window=window)
     print(f"features: {info['in_dim']} | dropped by the pipeline: "
           f"{', '.join(info['constant_in_train'])}")
     for name, loader in loaders.items():
         x, target, label, row = next(iter(loader))
+        # (input_tensor, target_tensor, label, row)
         print(f"{name:5s} | windows {len(loader.dataset):5d} | input {tuple(x.shape)} "
               f"| target {tuple(target.shape)}")
