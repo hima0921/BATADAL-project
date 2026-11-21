@@ -25,15 +25,15 @@ BASELINE = {
     "num_dec_blocks": 2,
     "hidden_dim": 128,
     "embedding_dim": 64,
-    "num_encodings": 4,
-    "bottleneck_dim": 16,
+    "num_latent_tokens": 4,
+    "latent_dim": 16,
     "activation_type": "gelu"}
 
 # Setting -> values to try. The baseline's own value is skipped automatically.
 ABLATIONS = {
     "window": [12, 24],
-    "num_encodings": [1, 2, 4, 8],
-    "bottleneck_dim": [4, 8, 16, 32],
+    "num_latent_tokens": [1, 2, 4, 8],
+    "latent_dim": [4, 8, 16, 32],
     "num_enc_blocks": [1, 2, 3],
     "num_dec_blocks": [1, 2, 3]}
 
@@ -44,8 +44,8 @@ def check_config(name, config):
         raise ValueError(f"{name}: embedding_dim must be divisible by num_heads")
     # The decoder applies LayerNorm to each bottleneck token, which removes
     # its mean and scale: 1 value carries nothing and 2 carry one bit.
-    if config["bottleneck_dim"] < 4:
-        raise ValueError(f"{name}: bottleneck_dim below 4 is degenerate")
+    if config["latent_dim"] < 4:
+        raise ValueError(f"{name}: latent_dim below 4 is degenerate")
     # The loader's gap between blocks is 24 hours and must cover the window.
     if config["window"] > 24:
         raise ValueError(f"{name}: window above 24 needs a larger gap_hours in the loader")
