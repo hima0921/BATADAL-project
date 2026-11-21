@@ -5,6 +5,8 @@ import argparse
 
 import numpy as np
 
+import torch
+
 from model import Transformer_Recon_Model
 
 from batadal_dataset import build_dataloaders
@@ -54,7 +56,7 @@ def main():
         help="Which hardware device will model run on.",
         choices=['cpu', 'cuda'],
         type=str,
-        default="cpu")
+        default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument(
         "--dataset-path",
         help="Folder of processed files from Pipeline.ipynb (data/processed).",
@@ -130,14 +132,16 @@ def main():
     if not classifier_status:
         raise Exception(f"An error occured while loading model checkpoint!")
 
-    # Same data settings the model was trained with (stored in the checkpoint).
+    # Same window the model was trained with (stored in the checkpoint). The
+    # loader fixes the 0 to 1 range and the dropped columns; passing the
+    # checkpoint's values makes an older checkpoint fail loudly if they differ.
     window = classifier_dict["window"]
     dataloaders, scaler, dataset_info = build_dataloaders(
         str(dataset_path),
         window=window,
         batch_size=batch_size,
-        feature_range=tuple(classifier_dict["feature_range"]),
-        constant_policy=classifier_dict["constant_policy"])
+        feature_range=tuple(classifier_dict.get("feature_range", (0.0, 1.0))),
+        constant_policy=classifier_dict.get("constant_policy", "drop"))
 
     feature_names = dataset_info["feature_names"]
     if classifier_dict["feature_names"] != feature_names:
@@ -151,11 +155,11 @@ def main():
         embedding_dim=classifier_dict["embedding_dim"],
         hidden_dim=classifier_dict["hidden_dim"],
         num_heads=classifier_dict["num_heads"],
-        num_encodings=classifier_dict["num_encodings"],
+        num_latent_tokens=classifier_dict["num_latent_tokens"],
         num_window=window,
         num_enc_blocks=classifier_dict["num_enc_blocks"],
         num_dec_blocks=classifier_dict["num_dec_blocks"],
-        bottleneck_dim=classifier_dict.get("bottleneck_dim", 16),
+        latent_dim=classifier_dict.get("latent_dim", 16),
         dropout=classifier_dict["dropout"],
         activation_type=classifier_dict["activation_type"])
     model.load_state_dict(classifier_dict["model"])

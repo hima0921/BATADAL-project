@@ -15,16 +15,20 @@ import matplotlib.pyplot as plt
 
 from model import Transformer_Recon_Model
 
-from batadal_dataset import build_dataloaders
+from batadal_dataset import build_dataloaders, DATASET2_FILE
 
 """
 Scores, calibrates and evaluates a FROZEN Transformer reconstruction model.
 
     python evaluate_recon_model.py \
         --dataset-path data/processed \
-        --dataset2-path data/processed/dataset2_scaled.csv \
         --model-checkpoint runs/recon_24h/best_model.pt \
         --out-dir runs/recon_24h/evaluation
+
+Dataset 2 is read from data/processed/dataset2_eval.csv (Pipeline.ipynb step
+8), which carries the labels: `label` is 1 inside the 7 real attack windows and
+0 elsewhere, and `attack_id` names the attack. Pass --dataset2-path only if the
+file is somewhere else.
 
 Steps, following the proposal:
 1. Scoring.     Squared reconstruction error per hour and per sensor, taken at
@@ -45,15 +49,15 @@ Steps, following the proposal:
 The Test set is never read here.
 """
 
-HOURS_PER_WEEK = 168
+HOURS_PER_WEEK = 24 * 7  # 168
 
 # Three hourly scores are calibrated and evaluated side by side.
-#   topk_percentile  the proposal's score: each sensor's error as a percentile
-#                    of its calibration errors, mean of the top-k sensors.
-#   mean             the proposal's comparison: plain average error.
-#   topk_ratio       each sensor's error divided by its own 99th-percentile
-#                    calibration error, mean of the top-k sensors. Like the
-#                    percentile score, but it has no ceiling at 1.
+#   topk_percentile - the proposal's score: each sensor's error as a percentile
+#                     of its calibration errors, mean of the top-k sensors.
+#   mean            - the proposal's comparison: plain average error.
+#   topk_ratio      - each sensor's error divided by its own 99th-percentile
+#                     calibration error, mean of the top-k sensors. Like the
+#                     percentile score, but it has no ceiling at 1.
 SCORE_TYPES = ["topk_percentile", "mean", "topk_ratio"]
 
 INK = "#0b0b0b"
@@ -112,6 +116,11 @@ def sensor_errors(model, dataloader, device):
 
     errors_list, rows_list = [], []
     for windows, targets, _, rows in dataloader:
+        # The loader returns one row per window: the position of its last
+        # hour. A loader that returns one row per hour of the window would
+        # break the hour-to-score mapping below, so stop here instead.
+        if rows.dim() != 1:
+            raise ValueError("Expected one row index per window (the last-hour loader).")
         windows = windows.to(device)  # (N,Seq_window,Dim_in)
         targets = targets.to(device)  # (N,Seq_window,Dim_in)
 
@@ -719,7 +728,7 @@ def run_evaluation(calibration, dev_errors, dev_when, dev_labels, dev_attack_id,
 
     rows = [
         ("Attacks detected", lambda m: f"{m['attacks_detected']} of {m['attacks_total']}"),
-        ("Missed attacks", lambda m: m["missed_attacks"] or "none"),
+        ("Missed attacks (Attack ID:)", lambda m: m["missed_attacks"] or "none"),
         ("Mean delay (h, detected only)", lambda m: show(m["mean_delay_hours"], 1)),
         ("False-alarm episodes per week", lambda m: show(m["false_alarm_episodes_per_week"], 2)),
         ("Clean hours under alarm", lambda m: "n/a" if m["clean_hours_under_alarm"] is None
@@ -762,7 +771,7 @@ def main():
         help="Which hardware device will model run on.",
         choices=['cpu', 'cuda'],
         type=str,
-        default="cpu")
+        default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument(
         "--dataset-path",
         help="Folder of processed files from Pipeline.ipynb (data/processed).",
@@ -770,9 +779,9 @@ def main():
         required=True)
     parser.add_argument(
         "--dataset2-path",
-        help="File path for the processed Dataset 2 (data/processed/dataset2_scaled.csv).",
+        help="Processed Dataset 2 with labels. Default: dataset2_eval.csv in --dataset-path.",
         type=pathlib.Path,
-        required=True)
+        default=None)
     parser.add_argument(
         "--model-checkpoint",
         help="File path to the frozen model checkpoint (e.g. best_model.pt).",
@@ -790,12 +799,6 @@ def main():
         help="Batch size for scoring.",
         type=int,
         default=512)
-    parser.add_argument(
-        "--label-rule",
-        help="How Dataset 2 hours are labeled (see batadal_dataset.py).",
-        choices=['schedule', 'file', 'unlabeled_as_normal'],
-        type=str,
-        default="schedule")
     parser.add_argument(
         "--top-k",
         help="Number of highest sensor scores averaged in the top-k scores.",
@@ -836,9 +839,10 @@ def main():
     device = args["device"]  # Device to run model on.
     dataset_path = args["dataset_path"]  # Dataset 1 path.
     dataset2_path = args["dataset2_path"]  # Dataset 2 path.
+    if dataset2_path is None:
+        dataset2_path = pathlib.Path(dataset_path) / DATASET2_FILE
     model_checkpoint = args["model_checkpoint"]  # Filepath to frozen model.
     batch_size = args["batch_size"]  # Batch size for scoring.
-    label_rule = args["label_rule"]  # Label rule for Dataset 2.
     out_dir = args["out_dir"]  # Destination path for results.
     try:
         os.makedirs(out_dir, exist_ok=True)
@@ -864,16 +868,19 @@ def main():
     if not classifier_status:
         raise Exception(f"An error occured while loading model checkpoint!")
 
-    # Same data settings the model was trained with (stored in the checkpoint).
+    # Same window the model was trained with (stored in the checkpoint). The
+    # loader fixes the 0 to 1 range and the dropped columns; passing the
+    # checkpoint's values makes an older checkpoint fail loudly if they differ.
+    # The loader reads the labels from dataset2_eval.csv and rejects a file
+    # without them.
     window = classifier_dict["window"]
     dataloaders, scaler, dataset_info = build_dataloaders(
         str(dataset_path),
         str(dataset2_path),
         window=window,
         batch_size=batch_size,
-        feature_range=tuple(classifier_dict["feature_range"]),
-        constant_policy=classifier_dict["constant_policy"],
-        label_rule=label_rule)
+        feature_range=tuple(classifier_dict.get("feature_range", (0.0, 1.0))),
+        constant_policy=classifier_dict.get("constant_policy", "drop"))
 
     feature_names = dataset_info["feature_names"]
     if classifier_dict["feature_names"] != feature_names:
@@ -887,11 +894,11 @@ def main():
         embedding_dim=classifier_dict["embedding_dim"],
         hidden_dim=classifier_dict["hidden_dim"],
         num_heads=classifier_dict["num_heads"],
-        num_encodings=classifier_dict["num_encodings"],
+        num_latent_tokens=classifier_dict["num_latent_tokens"],
         num_window=window,
         num_enc_blocks=classifier_dict["num_enc_blocks"],
         num_dec_blocks=classifier_dict["num_dec_blocks"],
-        bottleneck_dim=classifier_dict.get("bottleneck_dim", 16),
+        latent_dim=classifier_dict.get("latent_dim", 16),
         dropout=classifier_dict["dropout"],
         activation_type=classifier_dict["activation_type"])
     model.load_state_dict(classifier_dict["model"])
@@ -904,7 +911,7 @@ def main():
     logging.info(f"Checkpoint Global Steps: {classifier_dict['curr_global_steps']:,}")
     logging.info(f"Window (hours): {window:,}")
     logging.info(f"Features: {len(feature_names):,}")
-    logging.info(f"Label rule for Dataset 2: {label_rule}")
+    logging.info(f"Dataset 2: {dataset2_path} (labels: the 7 real attack windows)")
     logging.info(f"Grace hours after an attack: {args['grace_hours']:,}")
 
     # 1-2. Scoring and calibration on the clean blocks of Dataset 1, unless a
