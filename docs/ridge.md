@@ -195,7 +195,32 @@ pred = models[target].predict(df[inputs])   # df: a scaled table, e.g. from data
 
 The paths assume the code runs from the `notebooks` folder. The Test set must go through the same rounding, column drop and scaler as in `docs/pipeline.md` before it is scored.
 
-## 11. Still open
+## 11. Ridge with the shared evaluation
+
+We also scored Ridge with Vincent's shared code (`calibrate` and `run_evaluation` in `models/Transformer/evaluate_recon_model.py`), so Ridge is scored the same way as the Transformer. The steps are in `notebooks/Ridge_shared_eval.ipynb`, and the numbers in this section come from its output.
+
+- We use the squared errors from `ridge_errors.csv`, because the shared code expects bigger = worse and Ridge's errors are signed.
+- The threshold is set on Calibration for three scores (`topk_percentile`, `mean`, `topk_ratio`), with the top 3 sensors, at most 1% of hours under alarm and at most 1 episode per week.
+- All 7 attacks are detected with all three scores.
+
+| | Our Ridge (section 7) | `topk_ratio` | `topk_percentile` |
+|---|---|---|---|
+| Precision | 0.893 | 0.891 | 0.891 |
+| Recall | 0.610 | 0.630 | 0.598 |
+| F1 | 0.725 | 0.738 | 0.715 |
+| ROC-AUC | 0.866 | 0.864 | 0.864 |
+| PR-AUC | 0.741 | 0.746 | 0.728 |
+| False alarm episodes per week | 1.46 | 1.41 | 1.46 |
+
+`topk_ratio` is closest to our method, and the numbers are almost the same, so both pieces of code agree. The `topk_percentile` threshold is 0.9975, close to its ceiling of 1.
+
+**Budget:** all three scores are outside the budget on Dataset 2, same as in section 7. They all have more than 1 false alarm episode per week (`topk_percentile` 1.46, `mean` 1.28, `topk_ratio` 1.41). On Validation, `topk_percentile` and `topk_ratio` are also outside the budget. Only `mean` stays inside.
+
+**Caution:** the S score is about 0.84 to 0.85 (0.840, 0.846 and 0.848). The competition's S scores are on the Test set, so ours (on Dataset 2) can't be compared with them yet.
+
+**Files:** everything is saved in `models/Ridge/evaluation/`: `metrics.json`, `per_attack.csv`, `hourly_scores.csv`, and the plots (calibration and timeline for each score, one plot per attack, top sensors per attack, detection delay and three false alarms).
+
+## 12. Still open
 
 1. **Dataset 2 is over the false alarm budget.** 32 episodes in 21.9 weeks is about 1.5 per week, even though Calibration is inside the budget.
 2. **A 2-hours-in-a-row alarm rule.** Raising an alarm only when 2 hours in a row are above the threshold could remove many single-hour false alarms. This rule should be the same for every model, so it is a team decision.
