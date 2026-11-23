@@ -1,40 +1,46 @@
-# Isolation Forest and the ensemble
+# XGBoost + Isolation Forest ensemble
 
-Detectors: Transformer reconstruction (`models/Transformer`), XGBoost (`models/XGBoost`), Isolation Forest + PCA (`isolation_forest.py`). `ensemble.py` fuses their per-hour scores.
+Two detectors with different failure modes, fused per hour: the supervised XGBoost (`models/XGBoost`, features and settings from Nemade et al. 2026) and an unsupervised Isolation Forest. The Transformer is not part of this ensemble.
 
 ```bash
 python ../XGBoost/train_xgboost.py --dataset-path ../../data/processed --out-dir runs/xgb
+# Isolation Forest = the team's (scores read straight from the zip; its .joblib models are never loaded):
+python ensemble.py --xgb-dir runs/xgb \
+    --teammate-iforest-zip ../Isolation_Forest/iforest_ensemble_outputs.zip --out-dir runs/ensemble
+# Optional comparison: this folder's own Isolation Forest + PCA (the paper's recipe)
 python isolation_forest.py --dataset-path ../../data/processed --out-dir runs/iforest
-# once per trained Transformer checkpoint (run in the Transformer environment):
-python export_transformer_scores.py --dataset-path ../../data/processed \
-    --model-checkpoint ../Transformer/runs/recon_24h/best_model.pt --out transformer_hourly_scores.csv
-python ensemble.py --xgb-dir runs/xgb --iforest-dir runs/iforest \
-    --transformer-scores transformer_hourly_scores.csv --out-dir runs/ensemble
+python ensemble.py --xgb-dir runs/xgb --iforest-dir runs/iforest --out-dir runs/ensemble_pca
 ```
+(`export_transformer_scores.py` and the `--transformer-scores` option remain for a later three-way ensemble.)
 
 ## Rules that keep Dataset 2 out of every choice
-- The Isolation Forest is fitted on the Dataset 1 train block only (the paper fits it on Dataset 2's own `-999` rows).
-- Scores are put on a common scale with the calibration block only (`percentile`, or `ratio` = log(1 + score / calibration 99th percentile)).
-- Fusion is a fixed rule, not fitted weights: `mean`, `paper` (0.4 / 0.1 / 0.5, renormalised over the detectors present) or `max`. `max` of calibration percentiles is the fusion the project proposal already specifies.
-- The alarm threshold is the lowest one inside the false-alarm budget on the calibration block.
-- Evaluation is as in `models/XGBoost`: positives = `ATT_FLAG = 1` hours, `-999` dropped, false alarms on the validation block, XGBoost scored out-of-fold.
+- Isolation Forest fitted on the Dataset 1 train block only.
+- Scores are put on a common scale with the calibration block only: `percentile` (share of calibration scores it is >=) or `ratio` (log(1 + score / calibration 99th percentile)).
+- Fusion is a fixed rule, not fitted weights: `mean`, `paper` (0.4 XGBoost / 0.1 Isolation Forest, renormalised) or `max`. `max` of calibration percentiles is the fusion the project proposal already specifies.
+- Alarm threshold: the lowest one inside the false-alarm budget (<= 1 episode/week, <= 1% of hours) on the calibration block.
+- Evaluation as in `models/XGBoost`: positives = `ATT_FLAG = 1` hours, `-999` dropped, false alarms on the validation block, XGBoost scored out-of-fold. Seeds are paired (XGBoost seed k with Isolation Forest seed k); scores are matched by `DATETIME`.
 
-## First result: XGBoost + Isolation Forest (3 seeds, mean; Transformer not yet included)
+## Results (3 seeds, mean; percentile scale)
+
+Team Isolation Forest (36 raw sensors, 200 trees, no PCA):
+
+| Score | Attacks detected (of 7) | Recall | Precision | F1 | ROC-AUC | PR-AUC | S-score |
+|---|---|---|---|---|---|---|---|
+| XGBoost | 4.0 | 0.25 | 0.89 | 0.39 | 0.70 | 0.49 | 0.54 |
+| Isolation Forest | 5.3 | 0.05 | 0.51 | 0.09 | 0.73 | 0.29 | 0.46 |
+| mean of percentiles | 4.0 | 0.07 | 0.61 | 0.12 | 0.76 | 0.30 | 0.47 |
+| paper weights | 4.7 | 0.09 | 0.71 | 0.16 | 0.73 | 0.36 | 0.52 |
+| **max of percentiles** | **6.3** | **0.26** | **0.84** | **0.39** | **0.88** | **0.59** | **0.63** |
+
+Comparison: our Isolation Forest + PCA (raw sensors + 1-step differences, 20 components, 500 trees):
 
 | Score | Attacks detected | Recall | Precision | F1 | ROC-AUC | PR-AUC | S-score |
 |---|---|---|---|---|---|---|---|
-| XGBoost | 4 | 0.25 | 0.89 | 0.39 | 0.70 | 0.49 | 0.54 |
-| Isolation Forest | 6 | 0.48 | 0.90 | 0.63 | 0.80 | 0.62 | 0.74 |
-| mean of percentiles | 7 | 0.10 | 0.69 | 0.18 | 0.81 | 0.39 | 0.68 |
-| paper weights | 6 | 0.12 | 0.69 | 0.20 | 0.74 | 0.40 | 0.60 |
-| **max of percentiles** | **7** | **0.69** | **0.96** | **0.80** | **0.95** | **0.87** | **0.80** |
+| Isolation Forest | 6.0 | 0.48 | 0.90 | 0.63 | 0.80 | 0.62 | 0.74 |
+| max of percentiles | 7.0 | 0.69 | 0.96 | 0.80 | 0.95 | 0.87 | 0.80 |
 
-The two detectors catch different hours (XGBoost: attack 4; Isolation Forest: most of the rest), so a rule that alarms when either is extreme helps and averaging hurts: a mean dilutes a one-detector spike below the threshold. Six fusion variants were run; the one that works is the proposal's own rule, but treat the 0.80 as optimistic until it is confirmed on the Test set.
-
-## Checks done
-- Era confound (Dataset 1 is 2014, Dataset 2 is 2016): Isolation Forest AUC for the labeled attack hours is 0.80 against 2014 validation hours and 0.80 against 2016 clean hours; 2016 clean hours score like 2014 ones. No inflation from the era for this detector.
-- XGBoost clean hours are scored by one held-out-attack model each (round-robin), the same way attack hours are, so averaging does not make them look calmer. Averaging them instead changed the results by less than 0.01.
-
-## Not yet done
-- Transformer scores: the exporter is written but untested (no checkpoint on this machine); the ensemble with all three detectors needs it.
-- Precision depends on the 219 : 1,705 positive-to-negative mix, which is arbitrary.
+## Reading it
+- Max fusion beats both detectors alone in either case: the two catch different hours (XGBoost mostly attack 4), so alarming when either is extreme helps, and averaging dilutes a one-detector spike below the threshold.
+- The team Isolation Forest is a static baseline on raw sensors and is weak on this protocol (recall 0.05). Adding the paper's two steps (differences and PCA) is what lifts it; the paper reports the same (F1 0.245 without PCA, 0.565 with). If the ensemble is to be strong, use the PCA version or add those steps to the team notebook.
+- Six fusion variants were run per Isolation Forest; the best is the proposal's own rule, but treat the figures as optimistic until confirmed on the Test set. Only 7 attacks exist, and precision depends on the arbitrary 219 : 1,705 attack-to-clean mix.
+- Era check (Dataset 1 is 2014, Dataset 2 is 2016): our Isolation Forest's AUC is 0.80 against both 2014 and 2016 clean hours, so the era does not inflate it. Not checked for the team's.

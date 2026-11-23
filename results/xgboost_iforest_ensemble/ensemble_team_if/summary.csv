@@ -1,0 +1,11 @@
+norm,detectors,fusion,detected,mean_delay,recall,precision,f1,tnr,roc_auc,pr_auc,s_score
+percentile,xgb,single,4.0,11.667,0.248,0.886,0.388,0.996,0.7,0.486,0.539
+percentile,iforest,single,5.333,34.889,0.052,0.508,0.094,0.994,0.729,0.292,0.463
+percentile,xgb+iforest,mean,4.0,14.583,0.065,0.614,0.118,0.995,0.757,0.3,0.471
+percentile,xgb+iforest,paper,4.667,15.083,0.093,0.708,0.164,0.995,0.725,0.355,0.52
+percentile,xgb+iforest,max,6.333,23.175,0.256,0.836,0.392,0.994,0.876,0.588,0.63
+ratio,xgb,single,4.0,11.583,0.25,0.887,0.39,0.996,0.7,0.49,0.54
+ratio,iforest,single,5.333,34.889,0.053,0.516,0.097,0.994,0.729,0.294,0.464
+ratio,xgb+iforest,mean,4.0,11.667,0.248,0.886,0.388,0.996,0.876,0.571,0.539
+ratio,xgb+iforest,paper,4.0,11.583,0.248,0.886,0.388,0.996,0.827,0.532,0.54
+ratio,xgb+iforest,max,4.0,11.583,0.25,0.887,0.39,0.996,0.825,0.542,0.54

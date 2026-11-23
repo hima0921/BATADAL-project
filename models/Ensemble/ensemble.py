@@ -2,7 +2,8 @@
 Combines the per-hour scores of the detectors and evaluates the result.
 
     python ensemble.py \
-        --xgb-dir ../XGBoost/runs/xgb --iforest-dir runs/iforest \
+        --xgb-dir ../XGBoost/runs/xgb \
+        --teammate-iforest-zip ../Isolation_Forest/iforest_ensemble_outputs.zip \
         --transformer-scores transformer_hourly_scores.csv \
         --out-dir runs/ensemble
 
@@ -44,11 +45,29 @@ DETECTORS = {"xgb": "xgb_score", "iforest": "if_score"}
 PAPER_WEIGHTS = {"xgb": 0.4, "iforest": 0.1, "transformer": 0.5}
 
 
-def load_scores(xgb_path, if_path, transformer_path, transformer_column):
+def read_teammate_iforest(zip_path, seed):
+    """
+    Scores of the team's Isolation Forest (models/Isolation_Forest/iforest_ensemble_outputs.zip):
+    36 raw sensors, 200 trees, fitted on the Dataset 1 train block. Read as plain CSV from the
+    zip (the .joblib models in it are never loaded). Keyed by DATETIME.
+    """
+    import zipfile
+    frames = []
+    with zipfile.ZipFile(zip_path) as z:
+        for source, name in (("val", "val"), ("cal", "cal"), ("d2", "dataset2")):
+            with z.open(f"scores/iforest_scores_{name}.csv") as f:
+                df = pd.read_csv(f)
+            frames.append(pd.DataFrame({"source": source, "datetime": pd.to_datetime(df["DATETIME"]),
+                                        "if_score": df[f"score_seed{seed}"]}))
+    return pd.concat(frames, ignore_index=True)
+
+
+def load_scores(xgb_path, forest, transformer_path=None, transformer_column=None):
     """One frame keyed by (source, row) holding only the hours every detector has."""
-    xgb = pd.read_csv(xgb_path)[["source", "row", "att_flag", "attack_id", "xgb_score"]]
-    forest = pd.read_csv(if_path)
-    frame = xgb.merge(forest, on=["source", "row"], how="inner", validate="1:1")
+    xgb = pd.read_csv(xgb_path)[["source", "datetime", "row", "att_flag", "attack_id", "xgb_score"]]
+    xgb["datetime"] = pd.to_datetime(xgb["datetime"])
+    keys = ["source", "row"] if "row" in forest.columns else ["source", "datetime"]
+    frame = xgb.merge(forest, on=keys, how="inner", validate="1:1")
     if transformer_path is not None:
         tr = pd.read_csv(transformer_path)[["source", "row", transformer_column]]
         frame = frame.merge(tr.rename(columns={transformer_column: "tr_score"}),
@@ -132,7 +151,10 @@ def run(frame, names, norm):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--xgb-dir", type=pathlib.Path, required=True)
-    parser.add_argument("--iforest-dir", type=pathlib.Path, required=True)
+    parser.add_argument("--iforest-dir", type=pathlib.Path, default=None,
+                        help="Scores from isolation_forest.py (this folder's own Isolation Forest).")
+    parser.add_argument("--teammate-iforest-zip", type=pathlib.Path, default=None,
+                        help="models/Isolation_Forest/iforest_ensemble_outputs.zip (the team's Isolation Forest).")
     parser.add_argument("--transformer-scores", type=pathlib.Path, default=None)
     parser.add_argument("--transformer-column", default="tr_topk_ratio",
                         choices=["tr_topk_percentile", "tr_mean", "tr_topk_ratio"])
@@ -143,8 +165,13 @@ def main():
 
     rows = []
     for seed in args.seeds:
-        frame = load_scores(args.xgb_dir / f"seed{seed}" / "xgb_hourly_scores.csv",
-                            args.iforest_dir / f"seed{seed}" / "iforest_hourly_scores.csv",
+        if args.teammate_iforest_zip is not None:
+            forest = read_teammate_iforest(args.teammate_iforest_zip, seed)
+        elif args.iforest_dir is not None:
+            forest = pd.read_csv(args.iforest_dir / f"seed{seed}" / "iforest_hourly_scores.csv")
+        else:
+            parser.error("give --teammate-iforest-zip or --iforest-dir")
+        frame = load_scores(args.xgb_dir / f"seed{seed}" / "xgb_hourly_scores.csv", forest,
                             args.transformer_scores, args.transformer_column)
         for norm in ("percentile", "ratio"):
             for result in run(frame, DETECTORS, norm):
