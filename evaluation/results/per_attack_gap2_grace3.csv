@@ -1,0 +1,36 @@
+model,run,attack,hours,detected,delay_hours
+Transformer AE,0,1,50,True,0.0
+Transformer AE,0,2,24,True,0.0
+Transformer AE,0,3,60,True,0.0
+Transformer AE,0,4,94,True,0.0
+Transformer AE,0,5,60,True,5.0
+Transformer AE,0,6,94,True,2.0
+Transformer AE,0,7,110,True,5.0
+Ridge,0,1,50,True,0.0
+Ridge,0,2,24,True,0.0
+Ridge,0,3,60,True,43.0
+Ridge,0,4,94,True,0.0
+Ridge,0,5,60,True,0.0
+Ridge,0,6,94,True,10.0
+Ridge,0,7,110,True,5.0
+Isolation Forest,0,1,50,True,25.0
+Isolation Forest,0,2,24,False,
+Isolation Forest,0,3,60,True,26.0
+Isolation Forest,0,4,94,True,42.0
+Isolation Forest,0,5,60,False,
+Isolation Forest,0,6,94,True,29.0
+Isolation Forest,0,7,110,True,45.0
+Isolation Forest,1,1,50,True,25.0
+Isolation Forest,1,2,24,True,15.0
+Isolation Forest,1,3,60,True,46.0
+Isolation Forest,1,4,94,True,42.0
+Isolation Forest,1,5,60,False,
+Isolation Forest,1,6,94,True,53.0
+Isolation Forest,1,7,110,True,45.0
+Isolation Forest,2,1,50,True,25.0
+Isolation Forest,2,2,24,False,
+Isolation Forest,2,3,60,True,26.0
+Isolation Forest,2,4,94,True,42.0
+Isolation Forest,2,5,60,False,
+Isolation Forest,2,6,94,True,30.0
+Isolation Forest,2,7,110,True,45.0
