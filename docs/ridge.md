@@ -201,20 +201,37 @@ We also scored Ridge with Vincent's shared code (`calibrate` and `run_evaluation
 
 - We use the squared errors from `ridge_errors.csv`, because the shared code expects bigger = worse and Ridge's errors are signed.
 - The threshold is set on Calibration for three scores (`topk_percentile`, `mean`, `topk_ratio`), with the top 3 sensors, at most 1% of hours under alarm and at most 1 episode per week.
+- We use the team's shared settings, the same as the Transformer and Isolation Forest: merge gap 2 (alarm runs separated by 2 or fewer quiet hours count as one episode) and grace hours 3 (the 3 hours after each attack ends aren't counted). So Dataset 2 has 492 attack hours and 3,664 clean hours.
 - All 7 attacks are detected with all three scores.
+- Our first run used merge gap 0 and grace 0. With 2 and 3, the episodes per week dropped slightly (1.46 to 1.38 for `topk_percentile`), the threshold stayed the same, and Ridge is still outside the budget on Dataset 2.
 
 | | Our Ridge (section 7) | `topk_ratio` | `topk_percentile` |
 |---|---|---|---|
-| Precision | 0.893 | 0.891 | 0.891 |
+| Precision | 0.893 | 0.893 | 0.894 |
 | Recall | 0.610 | 0.630 | 0.598 |
-| F1 | 0.725 | 0.738 | 0.715 |
+| F1 | 0.725 | 0.739 | 0.716 |
 | ROC-AUC | 0.866 | 0.864 | 0.864 |
-| PR-AUC | 0.741 | 0.746 | 0.728 |
-| False alarm episodes per week | 1.46 | 1.41 | 1.46 |
+| PR-AUC | 0.741 | 0.749 | 0.731 |
+| False alarm episodes per week | 1.46 | 1.33 | 1.38 |
 
-`topk_ratio` is closest to our method, and the numbers are almost the same, so both pieces of code agree. The `topk_percentile` threshold is 0.9975, close to its ceiling of 1.
+`topk_ratio` is closest to our method, and the numbers are almost the same, so both pieces of code agree. Our own Ridge (section 7) counts episodes without a merge gap or grace hours, so its 1.46 per week uses a slightly stricter rule. The `topk_percentile` threshold is 0.9975, close to its ceiling of 1.
 
-**Budget:** all three scores are outside the budget on Dataset 2, same as in section 7. They all have more than 1 false alarm episode per week (`topk_percentile` 1.46, `mean` 1.28, `topk_ratio` 1.41). On Validation, `topk_percentile` and `topk_ratio` are also outside the budget. Only `mean` stays inside.
+**Budget:** all three scores are outside the budget on Dataset 2, same as in section 7. They all have more than 1 false alarm episode per week (`topk_percentile` 1.38, `mean` 1.24, `topk_ratio` 1.33). On Validation, `topk_percentile` and `topk_ratio` are also outside the budget. Only `mean` stays inside.
+
+**Ridge vs the Transformer** (both with `topk_percentile` and the same settings: top 3 sensors, merge gap 2, grace hours 3). The Transformer numbers are from `models/Transformer`, the frozen 12-hour model, seed 0.
+
+| | Ridge | Transformer |
+|---|---|---|
+| Precision | 0.894 | 0.906 |
+| Recall | 0.598 | 0.630 |
+| F1 | 0.716 | 0.743 |
+| ROC-AUC | 0.864 | 0.919 |
+| PR-AUC | 0.731 | 0.792 |
+| S score | 0.840 | 0.895 |
+| Mean delay (hours) | 7.7 | 1.7 |
+| False alarm episodes per week | 1.38 | 1.15 |
+
+The Transformer is better on every measure, mostly in ranking (ROC-AUC, PR-AUC) and speed (mean delay). This is likely because it sees the last 12 hours, while Ridge sees one hour at a time. Both are outside the budget on Dataset 2.
 
 **Caution:** the S score is about 0.84 to 0.85 (0.840, 0.846 and 0.848). The competition's S scores are on the Test set, so ours (on Dataset 2) can't be compared with them yet.
 
