@@ -5,6 +5,7 @@ Supervised detector after Nemade et al. (2026), "Cyber-Physical Attack Detection
 ```bash
 cd models/XGBoost
 python train_xgboost.py --dataset-path ../../data/processed --out-dir runs/xgb --seeds 0 1 2
+# or run XGBoost_BATADAL.ipynb (same code; outputs kept in notebook_outputs/)
 ```
 
 ## Labels
