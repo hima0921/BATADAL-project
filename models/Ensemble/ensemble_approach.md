@@ -11,6 +11,8 @@ python ensemble.py --xgb-dir runs/xgb \
 python isolation_forest.py --dataset-path ../../data/processed --out-dir runs/iforest
 python ensemble.py --xgb-dir runs/xgb --iforest-dir runs/iforest --out-dir runs/ensemble_pca
 ```
+The whole run is also in `Ensemble_BATADAL.ipynb` (reads the XGBoost notebook's scores and the team's zip, refits the PCA Isolation Forest, and saves tables and plots to `notebook_outputs/`).
+
 (`export_transformer_scores.py` and the `--transformer-scores` option remain for a later three-way ensemble.)
 
 ## Rules that keep Dataset 2 out of every choice
@@ -44,3 +46,4 @@ Comparison: our Isolation Forest + PCA (raw sensors + 1-step differences, 20 com
 - The team Isolation Forest is a static baseline on raw sensors and is weak on this protocol (recall 0.05). Adding the paper's two steps (differences and PCA) is what lifts it; the paper reports the same (F1 0.245 without PCA, 0.565 with). If the ensemble is to be strong, use the PCA version or add those steps to the team notebook.
 - Six fusion variants were run per Isolation Forest; the best is the proposal's own rule, but treat the figures as optimistic until confirmed on the Test set. Only 7 attacks exist, and precision depends on the arbitrary 219 : 1,705 attack-to-clean mix.
 - Era check (Dataset 1 is 2014, Dataset 2 is 2016): our Isolation Forest's AUC is 0.80 against both 2014 and 2016 clean hours, so the era does not inflate it. Not checked for the team's.
+- The percentile scale tops out at 1, so the calibrated thresholds sit just below 1 and the attack-window plots look flat near the top; the `ratio` scale has no ceiling but gave weaker alarms at the same budget.
