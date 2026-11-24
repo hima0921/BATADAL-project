@@ -23,9 +23,11 @@ ROOT = Path(__file__).resolve().parents[1]
 LABELS = ROOT / "data/processed/dataset2_eval.csv"
 WINDOWS = ROOT / "data/attack_windows_dataset2.csv"
 TRANSFORMER = ROOT / "models/Transformer/Notebook/inference_results/hourly_scores.csv"
-RIDGE = ROOT / "models/Ridge/ridge_scores.csv"
+RIDGE = ROOT / "models/Ridge/evaluation/hourly_scores.csv"
 IFOREST_ZIP = ROOT / "models/Isolation_Forest/iforest_results.zip"
+ENSEMBLE_DIR = ROOT / "results/xgboost_iforest_ensemble"  # Suhas's XGBoost + PCA Isolation Forest runs
 OUT = ROOT / "evaluation/results"
+SEEDS = ("seed0", "seed1", "seed2")
 
 
 def hour_key(text):
@@ -63,7 +65,7 @@ def read_scores(rows, time_col, score_col, alarm_col):
     return out
 
 
-def load_models():
+def load_models(ensemble_dir=ENSEMBLE_DIR):
     """Returns {model name: [run, ...]}; each run is {hour: (score, alarm)}."""
     models = {}
 
@@ -72,18 +74,78 @@ def load_models():
             csv.DictReader(f), "datetime", "topk_percentile_score", "topk_percentile_alarm")]
 
     with open(RIDGE, newline="") as f:
-        rows = [r for r in csv.DictReader(f) if r["split"] == "dataset2"]
-    models["Ridge"] = [read_scores(rows, "DATETIME", "score", "alarm")]
+        models["Ridge"] = [read_scores(
+            csv.DictReader(f), "datetime", "topk_percentile_score", "topk_percentile_alarm")]
 
     runs = []
     with zipfile.ZipFile(IFOREST_ZIP) as z:
-        for seed in ("seed0", "seed1", "seed2"):
+        for seed in SEEDS:
             with z.open(f"{seed}/hourly_scores.csv") as f:
                 reader = csv.DictReader(io.TextIOWrapper(f, newline=""))
                 runs.append(read_scores(reader, "DATETIME", "score", "alarm"))
     models["Isolation Forest"] = runs
 
+    if (Path(ensemble_dir) / "xgb").is_dir():
+        models.update(load_ensemble(Path(ensemble_dir)))
+    else:
+        print(f"note: {ensemble_dir} not found, XGBoost and ensemble left out\n")
+
     return models
+
+
+# ------------------------------------------------- XGBoost + Isolation Forest
+
+ENSEMBLE_MERGE_GAP = 3  # the gap Suhas's threshold search uses (models/XGBoost/xgb_metrics.py)
+
+
+def _episodes_per_week(alarms, merge_gap):
+    return count_episodes(alarms, merge_gap) / (len(alarms) / 168)
+
+
+def find_threshold(cal_scores, max_alarm_fraction=0.01, max_episodes_per_week=1.0,
+                   merge_gap=ENSEMBLE_MERGE_GAP):
+    """Same rule as xgb_metrics.find_threshold: walk down from the highest calibration
+    score and stop at the first threshold that breaks either budget."""
+    threshold = None
+    for cand in sorted(set(cal_scores), reverse=True):
+        alarms = [s > cand for s in cal_scores]
+        if sum(alarms) / len(alarms) > max_alarm_fraction:
+            break
+        if _episodes_per_week(alarms, merge_gap) > max_episodes_per_week:
+            break
+        threshold = cand
+    return threshold if threshold is not None else max(cal_scores)
+
+
+def load_ensemble(base):
+    """Rebuilds Suhas's detectors from his saved hourly scores, as in
+    models/Ensemble/ensemble.py: each score becomes the share of calibration scores
+    it is >= to (percentile scale), fusion is the max of the two, and each
+    detector gets its own calibration threshold."""
+    import bisect
+
+    out = {"XGBoost": [], "IF + PCA (Suhas)": [], "Ensemble XGB + IF (max)": []}
+    for seed in SEEDS:
+        with open(base / "xgb" / seed / "xgb_hourly_scores.csv", newline="") as f:
+            xgb = {(r["source"], int(r["row"])): r for r in csv.DictReader(f)}
+        with open(base / "iforest" / seed / "iforest_hourly_scores.csv", newline="") as f:
+            iforest = {(r["source"], int(r["row"])): float(r["if_score"]) for r in csv.DictReader(f)}
+        keys = sorted(k for k in xgb if k in iforest)
+
+        raw = {"xgb": {k: float(xgb[k]["xgb_score"]) for k in keys}, "if": {k: iforest[k] for k in keys}}
+        scaled = {}
+        for name, vals in raw.items():
+            ref = sorted(vals[k] for k in keys if k[0] == "cal")
+            scaled[name] = {k: bisect.bisect_right(ref, v) / len(ref) for k, v in vals.items()}
+        scaled["max"] = {k: max(scaled["xgb"][k], scaled["if"][k]) for k in keys}
+
+        cal_keys = [k for k in keys if k[0] == "cal"]   # sorted by row = time order
+        d2_keys = [k for k in keys if k[0] == "d2"]
+        for model, name in (("XGBoost", "xgb"), ("IF + PCA (Suhas)", "if"), ("Ensemble XGB + IF (max)", "max")):
+            s = scaled[name]
+            thr = find_threshold([s[k] for k in cal_keys])
+            out[model].append({hour_key(xgb[k]["datetime"]): (s[k], int(s[k] > thr)) for k in d2_keys})
+    return out
 
 
 # ---------------------------------------------------------------- metrics
@@ -237,11 +299,13 @@ def main():
     ap.add_argument("--grace", type=int, default=3, help="hours after each attack left out of scoring")
     ap.add_argument("--all-hours", action="store_true",
                     help="score each model on all its own hours instead of the hours every model scored")
+    ap.add_argument("--ensemble-dir", default=str(ENSEMBLE_DIR),
+                    help="folder with Suhas's xgb/ and iforest/ seed runs")
     args = ap.parse_args()
 
     labels = load_labels()
     windows = load_windows()
-    models = load_models()
+    models = load_models(args.ensemble_dir)
 
     common = set(labels)
     for runs in models.values():
