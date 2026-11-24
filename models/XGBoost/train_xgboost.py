@@ -43,7 +43,7 @@ precision, recall or any hour-level figure.
 
 Outputs per seed (<out-dir>/seed<k>/): metrics.json, per_attack.csv,
 folds.csv, xgb_hourly_scores.csv (for the ensemble), feature_importance.csv,
-final_model.json, plots. <out-dir>/summary.json averages over seeds.
+final_model.json, models/<fold k | final>.json (+ thresholds.csv), plots. <out-dir>/summary.json averages over seeds.
 """
 import os
 import json
@@ -286,6 +286,13 @@ def run_seed(blocks, args, out_dir, seed):
     importance = importance.sort_values(ascending=False)
     importance.to_csv(os.path.join(out_dir, "feature_importance.csv"), header=["gain"])
     models["final"]["model"].save_model(os.path.join(out_dir, "final_model.json"))
+    # Every leave-one-attack-out model too (fold<k> never saw attack k), with the threshold
+    # each one was calibrated to, so the out-of-fold scores can be reproduced.
+    os.makedirs(os.path.join(out_dir, "models"), exist_ok=True)
+    for name, m in models.items():
+        m["model"].save_model(os.path.join(out_dir, "models", f"{name}.json"))
+    pd.DataFrame([{"model": n, "n_pos_train": m["n_pos_train"], "threshold": m["threshold"]}
+                  for n, m in models.items()]).to_csv(os.path.join(out_dir, "models", "thresholds.csv"), index=False)
 
     plot_importance(importance, out_dir)
     plot_attacks(per_attack, win_attack, win_flag, oof_scores, models, scorer, out_dir)
