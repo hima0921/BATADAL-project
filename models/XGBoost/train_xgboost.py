@@ -17,7 +17,8 @@ Reporting: precision and F1 are NOT computed here (true positives come from Data
 and false positives from the validation block, so they only reflect the chosen mix).
 Use alarm hours per clean week; compute precision/F1 on the Test set only. The S-score
 is "approximate" for the same reason. Episodes merge alarm runs <= MERGE_GAP_HOURS apart.
-Hours of Dataset 2 outside every attack window are scored as an era check.
+Hours of Dataset 2 outside every attack window (minus GRACE_HOURS after each attack) are
+scored as an era check: alarm share and episodes per week, like the Transformer evaluation.
 
 Protocol (this is where it differs from the paper, which scored the same series
 it trained on):
@@ -59,7 +60,7 @@ import matplotlib.pyplot as plt
 
 from xgb_data import load_blocks
 from xgb_metrics import (
-    HOURS_PER_WEEK, MERGE_GAP_HOURS, roc_auc, pr_auc, episode_spans, clean_block_stats, find_threshold)
+    HOURS_PER_WEEK, MERGE_GAP_HOURS, GRACE_HOURS, normal_hours_mask, normal_hours_stats, roc_auc, pr_auc, episode_spans, clean_block_stats, find_threshold)
 
 # Nemade et al. (2026), section 4.2.
 PAPER_PARAMS = dict(
@@ -200,7 +201,12 @@ def run_seed(blocks, args, out_dir, seed):
     val_single, _ = single("val_scores", n_val)
     out_single, out_pick = single("out_scores", len(out_X))
     out_thr = np.array([models[m]["threshold"] for m in fold_names])[out_pick]
-    out_alarm_fraction = float((out_single > out_thr).mean()) if len(out_X) else None
+    # Era check, in the team's terms: Dataset 2 normal hours (outside every window, minus the
+    # grace hours after each attack), alarm share AND episodes per week.
+    alarms_full = np.zeros(len(attack_id), bool)
+    alarms_full[~in_window] = out_single > out_thr
+    d2_normal = normal_hours_stats(alarms_full, normal_hours_mask(attack_id, args.grace_hours),
+                                   d2_meta["row"].to_numpy(), args.merge_gap_hours)
 
     pos_scores = oof_scores[win_flag == 1]
     rank_scores = np.concatenate([pos_scores, val_single])
@@ -234,7 +240,8 @@ def run_seed(blocks, args, out_dir, seed):
         "roc_auc_schedule": roc_auc(sch_scores, sch_labels),
         "pr_auc_schedule": pr_auc(sch_scores, sch_labels),
         # era check: Dataset 2 hours outside every attack window
-        "d2_clean_hours": int(len(out_X)), "d2_clean_alarm_fraction": out_alarm_fraction,
+        "d2_clean_hours": d2_normal["hours"], "d2_clean_alarm_fraction": d2_normal["alarm_fraction"],
+        "d2_clean_episodes_per_week": d2_normal["episodes_per_week"],
         "d2_clean_in_training": d2_clean_in_training,
         # Approximate: recall (Dataset 2) and TNR (validation) come from different series, so
         # this is not the official S-score, which needs one labelled series (the Test set).
@@ -331,6 +338,8 @@ def main():
     parser.add_argument("--label-rule", choices=["confirmed_only", "minus999_normal", "schedule"],
                         default="confirmed_only",
                         help="How Dataset 2 labels enter training (evaluation reports confirmed and schedule labels).")
+    parser.add_argument("--grace-hours", type=int, default=GRACE_HOURS,
+                        help="Hours after each attack left out of the Dataset 2 normal-hour false-alarm count.")
     parser.add_argument("--merge-gap-hours", type=int, default=MERGE_GAP_HOURS,
                         help="Alarm runs this many quiet hours apart count as one episode.")
     parser.add_argument("--max-alarm-fraction", type=float, default=0.01)
@@ -352,7 +361,7 @@ def main():
               f"delay {metrics['mean_delay_hours']} recall {metrics['recall']:.3f} "
               f"TNR {metrics['true_negative_rate']:.4f} ROC {metrics['roc_auc']:.3f} "
               f"PR {metrics['pr_auc']:.3f} S~ {metrics['s_score_approx']:.3f} "
-              f"alarm h/wk {metrics['val_alarm_hours_per_week']:.2f} D2-clean alarms {metrics['d2_clean_alarm_fraction']:.3f}")
+              f"alarm h/wk {metrics['val_alarm_hours_per_week']:.2f} D2-normal alarms {metrics['d2_clean_alarm_fraction']:.3f} ({metrics['d2_clean_episodes_per_week']:.2f} ep/wk)")
 
     numeric = [k for k, v in all_metrics[0].items()
                if isinstance(v, (int, float)) and not isinstance(v, bool) and k != "seed"]

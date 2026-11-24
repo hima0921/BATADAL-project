@@ -9,9 +9,12 @@ built they should move into one shared module.
 import numpy as np
 
 HOURS_PER_WEEK = 24 * 7
-# Fixed before any test-set scoring and used for every detector: alarm runs separated by at most
-# this many quiet hours count as ONE episode (a flickering alarm is one event, not many).
-MERGE_GAP_HOURS = 3
+# Fixed before any test-set scoring and used for every detector (same as the Transformer
+# evaluation): alarm runs separated by at most this many quiet hours count as ONE episode.
+MERGE_GAP_HOURS = 2
+# Hours after each attack's real end that are left out of the false-alarm count on Dataset 2
+# (the plant is still recovering). Same value as the Transformer evaluation.
+GRACE_HOURS = 3
 
 
 def roc_auc(scores, labels):
@@ -78,3 +81,29 @@ def find_threshold(scores, max_alarm_fraction=0.01, max_episodes_per_week=1.0, m
             break
         threshold = candidate
     return float(threshold)
+
+
+def normal_hours_mask(attack_id, grace_hours=GRACE_HOURS):
+    """Dataset 2 hours that count as normal: outside every attack window and not in the grace
+    hours that follow one. attack_id is aligned with consecutive scored hours."""
+    attack_id = np.asarray(attack_id)
+    valid = attack_id == 0
+    for end in np.flatnonzero((attack_id[:-1] > 0) & (attack_id[1:] == 0)) + 1:
+        valid[end:end + grace_hours] = False
+    return valid
+
+
+def normal_hours_stats(alarms, valid, rows, merge_gap_hours=MERGE_GAP_HOURS):
+    """
+    False-alarm figures on the Dataset 2 normal hours. They form several stretches between
+    the attacks, so episodes are counted inside each contiguous stretch and added up.
+    alarms, valid, rows are aligned over the scored Dataset 2 hours.
+    """
+    alarms, rows = np.asarray(alarms, bool), np.asarray(rows)
+    idx = np.flatnonzero(valid)
+    if len(idx) == 0:
+        return {"hours": 0, "alarm_fraction": None, "episodes": 0, "episodes_per_week": None}
+    stretches = np.split(idx, np.flatnonzero(np.diff(rows[idx]) != 1) + 1)
+    episodes = sum(len(episode_spans(alarms[st], merge_gap_hours)) for st in stretches)
+    return {"hours": int(len(idx)), "alarm_fraction": float(alarms[idx].mean()),
+            "episodes": int(episodes), "episodes_per_week": float(episodes / (len(idx) / HOURS_PER_WEEK))}

@@ -32,7 +32,7 @@ Differs from the paper, on purpose:
 
 ## Results (3 seeds, mean)
 
-Default run: no time features, `confirmed_only` labels, episodes merge alarms at most 3 quiet hours apart (`MERGE_GAP_HOURS`, fixed for every detector).
+Default run: no time features, `confirmed_only` labels, episodes merge alarms at most 2 quiet hours apart (`MERGE_GAP_HOURS`) and 3 grace hours after each attack are left out of the Dataset 2 false-alarm count (`GRACE_HOURS`); both match the Transformer evaluation and are fixed for every detector.
 
 | | no time features (default) | with `--time-features` |
 |---|---|---|
@@ -41,10 +41,11 @@ Default run: no time features, `confirmed_only` labels, episodes merge alarms at
 | Mean delay, detected only (h) | 15.1 | 10.9 |
 | Recall on confirmed labeled hours | 0.28 | 0.28 |
 | Recall on schedule labels (every window hour) | 0.27 | 0.25 |
-| Validation alarm hours per clean week | 1.48 | 1.12 |
+| Validation alarm hours per clean week | 1.47 | 1.06 |
 | ROC-AUC / PR-AUC (confirmed labels) | 0.69 / 0.48 | 0.70 / 0.49 |
 | ROC-AUC (schedule labels) | 0.75 | 0.75 |
-| Dataset 2 hours outside windows that alarm (era check) | 1.8% | 1.7% |
+| Dataset 2 normal hours that alarm (era check) | 1.5% | 1.4% |
+| Dataset 2 normal-hour false-alarm episodes per week | 1.15 | 0.85 |
 | Approximate S-score | 0.60 | 0.55 |
 
 How to read these:
@@ -56,7 +57,7 @@ How to read these:
 
 ### Era check
 
-Dataset 1 (all negatives) is from 2014 and Dataset 2 (all positives) from 2016. The hours of Dataset 2 outside every attack window are scored and never trained on under `confirmed_only`. They alarm at 1.7-1.9% against the 1% budget set on 2014 data: a mild excess, not the large one that would mean the model reacts mostly to the year, but it is not zero either. Part of it can be genuine drift between years, so treat it as a warning and keep the budget in mind when reading the false-alarm figures.
+Dataset 1 (all negatives) is from 2014 and Dataset 2 (all positives) from 2016. As in the team's Transformer evaluation, the Dataset 2 normal hours (outside every attack window, minus 3 grace hours after each attack) are scored too; they are never trained on under `confirmed_only`. They alarm on 1.4-1.5% of hours at 0.85-1.15 episodes per week, against a budget of 1% and 1 episode per week set on 2014 data. That is a mild excess, not the large one that would mean the model mostly reacts to the year, but it is not zero. Part of it can be genuine drift between years. False alarms are still also reported on the validation block (2014): 0.84 episodes per week.
 
 ### Label-rule sensitivity (`--label-rule`)
 
@@ -69,10 +70,11 @@ Trained under three rules, all evaluated on the same labels (3 seeds, mean):
 | Recall, confirmed labels | 0.28 | 0.26 | 0.62 |
 | Recall, schedule labels | 0.27 | 0.21 | 0.46 |
 | Validation alarm hours per week | 1.5 | 1.5 | 4.7 |
+| Dataset 2 normal-hour episodes per week | 1.15 | 0.85 (in-sample) | 1.68 |
 | ROC-AUC, confirmed / schedule | 0.69 / 0.75 | 0.73 / 0.77 | 0.96 / 0.85 |
-| Dataset 2 outside-window alarm rate | 1.8% | 0.9% (trained on, in-sample) | 2.9% |
+| Dataset 2 normal-hour alarm rate | 1.5% | 0.7% (trained on, in-sample) | 2.6% |
 
-`schedule` trains on every hour of every window, so the model also sees attack onsets and detects all 7, but its alarms on clean data run well above the budget (4.7 alarm hours per week on validation, 2.9% outside the windows), (a likely reason, not tested here: window hours that look normal are taught as attacks). Its figures are not directly comparable with the other two for that reason. `minus999_normal` trains on the outside-window Dataset 2 hours, so its era figure is in-sample and should not be read as a check.
+`schedule` trains on every hour of every window, so the model also sees attack onsets and detects all 7, but its alarms on clean data run well above the budget (4.7 alarm hours per week on validation, 2.6% of Dataset 2 normal hours and 1.7 episodes per week there), (a likely reason, not tested here: window hours that look normal are taught as attacks). Its figures are not directly comparable with the other two for that reason. `minus999_normal` trains on the outside-window Dataset 2 hours, so its era figure is in-sample and should not be read as a check.
 
 ## Known limits
 

@@ -21,11 +21,12 @@ Everything an ensemble could be tuned on is kept away from Dataset 2:
        max        the largest normalised score
   3. the alarm threshold is the lowest one inside the false-alarm budget
      (<= 1 episode/week, <= 1% of hours) on the calibration block. An episode merges
-    alarm runs <= 3 quiet hours apart (xgb_metrics.MERGE_GAP_HOURS), the same for all detectors.
+    alarm runs <= 2 quiet hours apart (xgb_metrics.MERGE_GAP_HOURS), the same for all detectors.
 
 No precision/F1 (they mix Dataset 2 and validation hours); the S-score is "approximate".
 The Dataset 2 hours outside every attack window are scored as an era check
-(d2_clean_alarm_fraction, should be near the 1% budget).
+(d2_clean_alarm_fraction and d2_clean_episodes_per_week; hours outside every window,
+minus 3 grace hours after each attack; the 1% / 1-per-week budget applies).
 
 Evaluation matches train_xgboost.py: positives are the ATT_FLAG == 1 hours of
 Dataset 2 (-999 dropped); false alarms are counted on the validation block;
@@ -44,7 +45,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "XGBoost"))
-from xgb_metrics import roc_auc, pr_auc, clean_block_stats, find_threshold, HOURS_PER_WEEK  # noqa: E402
+from xgb_metrics import roc_auc, pr_auc, clean_block_stats, find_threshold, HOURS_PER_WEEK, normal_hours_mask, normal_hours_stats  # noqa: E402
 
 DETECTORS = {"xgb": "xgb_score", "iforest": "if_score"}
 PAPER_WEIGHTS = {"xgb": 0.4, "iforest": 0.1, "transformer": 0.5}
@@ -125,7 +126,9 @@ def evaluate(frame, column, max_alarm_fraction=0.01, max_episodes_per_week=1.0):
     sch_scores = np.concatenate([win, val])
     sch_labels = np.concatenate([np.ones(len(win)), np.zeros(len(val))])
     # Era check: Dataset 2 hours outside every attack window should alarm at about the budget.
-    clean = d2[d2.attack_id == 0][column].to_numpy()
+    d2s = d2.sort_values("row")
+    normal = normal_hours_stats((d2s[column] > threshold).to_numpy(), normal_hours_mask(d2s.attack_id.to_numpy()),
+                                d2s.row.to_numpy())
     s_ttd = 1.0 - float(np.mean(ttd))
     s_clf = (recall + tnr) / 2.0
     detected = [r for r in per_attack if r["detected"]]
@@ -139,7 +142,8 @@ def evaluate(frame, column, max_alarm_fraction=0.01, max_episodes_per_week=1.0):
         "val_alarm_hours_per_week": val_stats["alarm_hours"] / (len(val) / HOURS_PER_WEEK),
         "val_episodes_per_week": val_stats["episodes_per_week"],
         "cal_alarm_fraction": cal_stats["alarm_fraction"],
-        "d2_clean_alarm_fraction": float((clean > threshold).mean()) if len(clean) else None,
+        "d2_clean_alarm_fraction": normal["alarm_fraction"],
+        "d2_clean_episodes_per_week": normal["episodes_per_week"],
         "recall_schedule": float(sum(r["window_alarmed"] for r in per_attack) / max(sum(r["window_hours"] for r in per_attack), 1)),
         "roc_auc": roc_auc(rank_scores, rank_labels), "pr_auc": pr_auc(rank_scores, rank_labels),
         "roc_auc_schedule": roc_auc(sch_scores, sch_labels),
@@ -196,7 +200,7 @@ def main():
     table = pd.DataFrame(rows)
     table.to_csv(args.out_dir / "all_runs.csv", index=False)
     keys = ["norm", "detectors", "fusion"]
-    metrics = ["detected", "mean_delay", "recall", "tnr", "val_alarm_hours_per_week", "d2_clean_alarm_fraction",
+    metrics = ["detected", "mean_delay", "recall", "tnr", "val_alarm_hours_per_week", "d2_clean_alarm_fraction", "d2_clean_episodes_per_week",
                "recall_schedule", "roc_auc", "pr_auc", "roc_auc_schedule", "s_score_approx"]
     summary = table.groupby(keys, sort=False)[metrics].mean().round(3)
     summary.to_csv(args.out_dir / "summary.csv")

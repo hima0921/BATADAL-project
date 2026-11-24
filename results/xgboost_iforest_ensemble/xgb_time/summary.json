@@ -6,14 +6,15 @@
   ],
   "args": {
     "dataset_path": "../../data/processed",
-    "out_dir": "/private/tmp/claude-503/-Users-suhasreddy/990bb8f5-a4a4-4e70-89ca-90ffb93a89ca/scratchpad/runs2/xgb_time",
+    "out_dir": "/private/tmp/claude-503/-Users-suhasreddy/990bb8f5-a4a4-4e70-89ca-90ffb93a89ca/scratchpad/runs3/xgb_time",
     "seeds": "[0, 1, 2]",
     "n_estimators": "400",
     "max_depth": "6",
     "learning_rate": "0.05",
     "time_features": "True",
     "label_rule": "confirmed_only",
-    "merge_gap_hours": "3",
+    "grace_hours": "3",
+    "merge_gap_hours": "2",
     "max_alarm_fraction": "0.01",
     "max_episodes_per_week": "1.0",
     "n_jobs": "-1"
@@ -48,20 +49,20 @@
       "std": 0.004305064116813074
     },
     "true_negative_rate": {
-      "mean": 0.9933528836754643,
-      "std": 0.00027648358990677366
+      "mean": 0.9937113066145326,
+      "std": 0.00028029733682117305
     },
     "val_alarm_fraction": {
-      "mean": 0.00664711632453568,
-      "std": 0.00027648358990676385
+      "mean": 0.0062886933854675794,
+      "std": 0.0002802973368212005
     },
     "val_alarm_hours_per_week": {
-      "mean": 1.116715542521994,
-      "std": 0.0464492431043362
+      "mean": 1.0565004887585534,
+      "std": 0.0470899525859616
     },
     "val_false_alarm_episodes_per_week": {
-      "mean": 0.6404692082111437,
-      "std": 0.035476195416504354
+      "mean": 0.6021505376344086,
+      "std": 0.007741540517389402
     },
     "roc_auc": {
       "mean": 0.6997656637073341,
@@ -84,24 +85,28 @@
       "std": 0.0010855601906094095
     },
     "d2_clean_hours": {
-      "mean": 3662.0,
+      "mean": 3641.0,
       "std": 0.0
     },
     "d2_clean_alarm_fraction": {
-      "mean": 0.016839614054250867,
-      "std": 0.0003405841422514051
+      "mean": 0.014373340657328574,
+      "std": 0.000258942334957996
+    },
+    "d2_clean_episodes_per_week": {
+      "mean": 0.8459214501510575,
+      "std": 0.04350231227294336
     },
     "s_ttd": {
       "mean": 0.46416751097602155,
       "std": 0.010662721303606718
     },
     "s_clf": {
-      "mean": 0.6344237782152056,
-      "std": 0.0022248763902267907
+      "mean": 0.6346029896847395,
+      "std": 0.0021455630797416313
     },
     "s_score_approx": {
-      "mean": 0.5492956445956136,
-      "std": 0.005699002425648167
+      "mean": 0.5493852503303805,
+      "std": 0.005671480673852945
     },
     "n_features": {
       "mean": 391.0,
