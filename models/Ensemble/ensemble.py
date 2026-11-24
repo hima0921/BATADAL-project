@@ -150,7 +150,7 @@ def evaluate(frame, column, max_alarm_fraction=0.01, max_episodes_per_week=1.0):
         "s_score_approx": 0.5 * s_ttd + 0.5 * s_clf, "threshold": threshold}, per_attack
 
 
-def run(frame, names, norm):
+def run(frame, names, norm, per_attack_rows=None):
     """All single detectors and every combination, under one normalisation."""
     columns = {**DETECTORS, **({"transformer": "tr_score"} if "tr_score" in frame else {})}
     scaled = pd.DataFrame({n: normalise(frame, c, norm) for n, c in columns.items()})
@@ -164,7 +164,9 @@ def run(frame, names, norm):
             for fusion, score in fusions.items():
                 view = frame[["source", "row", "att_flag", "attack_id"]].copy()
                 view["score"] = score.to_numpy()
-                metrics, _ = evaluate(view, "score")
+                metrics, per = evaluate(view, "score")
+                if per_attack_rows is not None:
+                    per_attack_rows.extend({"norm": norm, "detectors": "+".join(combo), "fusion": fusion, **r} for r in per)
                 results.append({"norm": norm, "detectors": "+".join(combo), "fusion": fusion, **metrics})
     return results
 
@@ -184,7 +186,7 @@ def main():
     args = parser.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
 
-    rows = []
+    rows, per_rows = [], []
     for seed in args.seeds:
         if args.teammate_iforest_zip is not None:
             forest = read_teammate_iforest(args.teammate_iforest_zip, seed)
@@ -195,10 +197,14 @@ def main():
         frame = load_scores(args.xgb_dir / f"seed{seed}" / "xgb_hourly_scores.csv", forest,
                             args.transformer_scores, args.transformer_column)
         for norm in ("percentile", "ratio"):
-            for result in run(frame, DETECTORS, norm):
+            seed_per = []
+            for result in run(frame, DETECTORS, norm, seed_per):
                 rows.append({"seed": seed, **result})
+            per_rows.extend({"seed": seed, **r} for r in seed_per)
     table = pd.DataFrame(rows)
     table.to_csv(args.out_dir / "all_runs.csv", index=False)
+    # Per attack, for every seed / scale / detector set / fusion rule.
+    pd.DataFrame(per_rows).to_csv(args.out_dir / "per_attack.csv", index=False)
     keys = ["norm", "detectors", "fusion"]
     metrics = ["detected", "mean_delay", "recall", "tnr", "val_alarm_hours_per_week", "d2_clean_alarm_fraction", "d2_clean_episodes_per_week",
                "recall_schedule", "roc_auc", "pr_auc", "roc_auc_schedule", "s_score_approx"]

@@ -352,10 +352,11 @@ def main():
     print(f"features: {n_features} | train {len(blocks['train'][0])} val {len(blocks['val'][0])} "
           f"cal {len(blocks['cal'][0])} | Dataset 2 rows {len(blocks['d2'][0])}")
 
-    all_metrics = []
+    all_metrics, all_per_attack = [], []
     for seed in args.seeds:
         metrics, per_attack = run_seed(blocks, args, os.path.join(args.out_dir, f"seed{seed}"), seed)
         all_metrics.append(metrics)
+        all_per_attack.extend({"seed": seed, **r} for r in per_attack)
         print(f"seed {seed}: detected {metrics['attacks_detected']}/{metrics['attacks_total']} "
               f"(unseen {metrics['unseen_detected']}/{len(metrics['unseen_attacks'].split(','))}) "
               f"delay {metrics['mean_delay_hours']} recall {metrics['recall']:.3f} "
@@ -363,6 +364,7 @@ def main():
               f"PR {metrics['pr_auc']:.3f} S~ {metrics['s_score_approx']:.3f} "
               f"alarm h/wk {metrics['val_alarm_hours_per_week']:.2f} D2-normal alarms {metrics['d2_clean_alarm_fraction']:.3f} ({metrics['d2_clean_episodes_per_week']:.2f} ep/wk)")
 
+    pd.DataFrame(all_per_attack).to_csv(os.path.join(args.out_dir, "per_attack_all_seeds.csv"), index=False)
     numeric = [k for k, v in all_metrics[0].items()
                if isinstance(v, (int, float)) and not isinstance(v, bool) and k != "seed"]
     summary = {k: {"mean": float(np.mean([m[k] for m in all_metrics if m[k] is not None])),
