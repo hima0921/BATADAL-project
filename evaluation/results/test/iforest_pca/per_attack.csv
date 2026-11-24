@@ -1,0 +1,22 @@
+model,seed,attack,detected,delay_hours,hours_caught,attack_hours
+IF + PCA,0,8,True,21.0,2,70
+IF + PCA,0,9,True,22.0,2,65
+IF + PCA,0,10,False,,0,31
+IF + PCA,0,11,True,8.0,2,31
+IF + PCA,0,12,True,9.0,3,100
+IF + PCA,0,13,True,33.0,1,80
+IF + PCA,0,14,False,,0,30
+IF + PCA,1,8,True,21.0,2,70
+IF + PCA,1,9,True,21.0,3,65
+IF + PCA,1,10,False,,0,31
+IF + PCA,1,11,True,4.0,3,31
+IF + PCA,1,12,True,9.0,3,100
+IF + PCA,1,13,True,33.0,1,80
+IF + PCA,1,14,False,,0,30
+IF + PCA,2,8,True,21.0,1,70
+IF + PCA,2,9,True,23.0,1,65
+IF + PCA,2,10,False,,0,31
+IF + PCA,2,11,True,8.0,1,31
+IF + PCA,2,12,True,9.0,3,100
+IF + PCA,2,13,True,33.0,1,80
+IF + PCA,2,14,False,,0,30

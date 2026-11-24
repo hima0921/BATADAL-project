@@ -1,0 +1,8 @@
+attack,real_start,hours,topk_percentile_detected,topk_percentile_delay_hours,mean_detected,mean_delay_hours,topk_ratio_detected,topk_ratio_delay_hours
+8,2017-01-16 09,70,1,2,1,2,1,2
+9,2017-01-30 08,65,1,1,1,1,1,1
+10,2017-02-09 03,31,1,0,1,0,1,0
+11,2017-02-12 01,31,1,0,1,0,1,0
+12,2017-02-24 05,100,1,0,1,0,1,0
+13,2017-03-10 14,80,1,0,1,0,1,0
+14,2017-03-25 20,30,1,8,1,8,1,8

@@ -1,0 +1,78 @@
+model,seed,attack,detected,delay_hours,hours_caught,attack_hours
+Ridge,,8,True,2.0,39,70
+Ridge,,9,True,1.0,25,65
+Ridge,,10,True,0.0,30,31
+Ridge,,11,True,0.0,30,31
+Ridge,,12,True,0.0,93,100
+Ridge,,13,True,0.0,76,80
+Ridge,,14,True,8.0,8,30
+"Transformer (12 h, seed 0)",,8,True,2.0,29,70
+"Transformer (12 h, seed 0)",,9,True,1.0,22,65
+"Transformer (12 h, seed 0)",,10,True,0.0,31,31
+"Transformer (12 h, seed 0)",,11,True,0.0,31,31
+"Transformer (12 h, seed 0)",,12,True,0.0,63,100
+"Transformer (12 h, seed 0)",,13,True,0.0,54,80
+"Transformer (12 h, seed 0)",,14,True,8.0,5,30
+XGBoost,0,8,True,20.0,5,70
+XGBoost,0,9,False,,0,65
+XGBoost,0,10,True,25.0,3,31
+XGBoost,0,11,True,4.0,23,31
+XGBoost,0,12,False,,0,100
+XGBoost,0,13,True,5.0,5,80
+XGBoost,0,14,True,11.0,4,30
+XGBoost,1,8,True,20.0,3,70
+XGBoost,1,9,False,,0,65
+XGBoost,1,10,True,25.0,4,31
+XGBoost,1,11,True,4.0,23,31
+XGBoost,1,12,False,,0,100
+XGBoost,1,13,True,5.0,6,80
+XGBoost,1,14,True,10.0,5,30
+XGBoost,2,8,True,20.0,5,70
+XGBoost,2,9,False,,0,65
+XGBoost,2,10,True,25.0,3,31
+XGBoost,2,11,True,4.0,23,31
+XGBoost,2,12,False,,0,100
+XGBoost,2,13,True,40.0,4,80
+XGBoost,2,14,True,11.0,3,30
+IF + PCA,0,8,True,21.0,2,70
+IF + PCA,0,9,True,22.0,2,65
+IF + PCA,0,10,False,,0,31
+IF + PCA,0,11,True,8.0,2,31
+IF + PCA,0,12,True,9.0,3,100
+IF + PCA,0,13,True,33.0,1,80
+IF + PCA,0,14,False,,0,30
+IF + PCA,1,8,True,21.0,2,70
+IF + PCA,1,9,True,21.0,3,65
+IF + PCA,1,10,False,,0,31
+IF + PCA,1,11,True,4.0,3,31
+IF + PCA,1,12,True,9.0,3,100
+IF + PCA,1,13,True,33.0,1,80
+IF + PCA,1,14,False,,0,30
+IF + PCA,2,8,True,21.0,1,70
+IF + PCA,2,9,True,23.0,1,65
+IF + PCA,2,10,False,,0,31
+IF + PCA,2,11,True,8.0,1,31
+IF + PCA,2,12,True,9.0,3,100
+IF + PCA,2,13,True,33.0,1,80
+IF + PCA,2,14,False,,0,30
+Ensemble (max),0,8,True,20.0,4,70
+Ensemble (max),0,9,True,23.0,1,65
+Ensemble (max),0,10,True,25.0,3,31
+Ensemble (max),0,11,True,4.0,23,31
+Ensemble (max),0,12,True,9.0,2,100
+Ensemble (max),0,13,True,40.0,2,80
+Ensemble (max),0,14,True,11.0,4,30
+Ensemble (max),1,8,True,20.0,3,70
+Ensemble (max),1,9,True,23.0,1,65
+Ensemble (max),1,10,True,25.0,3,31
+Ensemble (max),1,11,True,4.0,23,31
+Ensemble (max),1,12,True,18.0,1,100
+Ensemble (max),1,13,True,5.0,5,80
+Ensemble (max),1,14,True,10.0,5,30
+Ensemble (max),2,8,True,20.0,2,70
+Ensemble (max),2,9,False,,0,65
+Ensemble (max),2,10,True,25.0,2,31
+Ensemble (max),2,11,True,4.0,22,31
+Ensemble (max),2,12,False,,0,100
+Ensemble (max),2,13,True,40.0,2,80
+Ensemble (max),2,14,True,11.0,3,30

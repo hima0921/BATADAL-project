@@ -157,7 +157,64 @@ Per attack on Dataset 2 (delay from the real start, and hours caught out of the 
 
 ### Test results
 
-To be added after the single Test run.
+We ran the Test set once, on 2026-11-23 at 21:13, at commit `0966133` on `freeze-prep`. That commit was pushed to GitHub before the run. We only changed `RUN_ON = "test"` and `UNLOCK_TEST = True`. No code, model, threshold or setting was changed, and no cell failed.
+
+**Checks.** The Test file has 2,089 rows and 407 attack hours, in attacks 8 to 14. No attack hour falls in the first 23 hours. We score 2,066 hours, from 2017-01-04 23:00 (row 23) onward. The Transformer's label join covers all 407 attack hours. The saved XGBoost and IF + PCA models still reproduce their saved Calibration scores (about 1e-10 and 6e-17).
+
+**Overall** (2,066 scored hours, merge gap 2, grace 3, `topk_percentile` for Ridge and the Transformer, mean over 3 seeds for the others)
+
+| Model | S | Attacks detected (of 7) | Mean delay (h) | False-alarm episodes / week | Normal hours alarmed | Precision | Recall | F1 | ROC-AUC | PR-AUC | Inside budget |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Ridge | 0.910 | 7 | 1.6 | 1.64 | 1.10% | 0.944 | 0.740 | 0.829 | 0.903 | 0.852 | No |
+| Transformer (12 h, seed 0) | 0.870 | 7 | 1.6 | 1.13 | 0.85% | 0.944 | 0.577 | 0.716 | 0.920 | 0.844 | No |
+| XGBoost | 0.502 | 5.0 | 15.3 | 0.89 | 0.69% | 0.780 | 0.097 | 0.173 | 0.608 | 0.357 | 2 of 3 seeds |
+| IF + PCA | 0.514 | 5.0 | 18.3 | 1.13 | 0.79% | 0.422 | 0.024 | 0.045 | 0.526 | 0.232 | 1 of 3 seeds |
+| Ensemble (max) | 0.562 | 6.3 | 18.0 | 0.44 | 0.57% | 0.800 | 0.091 | 0.163 | 0.602 | 0.351 | 3 of 3 seeds |
+
+**Each seed** (XGBoost, IF + PCA, ensemble)
+
+| Model | Seed | S | Attacks detected | Missed | Mean delay (h) | Episodes / week | Normal hours alarmed | Precision | Recall | F1 | ROC-AUC | PR-AUC |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| XGBoost | 0 | 0.512 | 5 | 9, 12 | 13.0 | 0.92 | 0.73% | 0.769 | 0.098 | 0.174 | 0.609 | 0.356 |
+| XGBoost | 1 | 0.515 | 5 | 9, 12 | 12.8 | 1.13 | 0.85% | 0.745 | 0.101 | 0.177 | 0.612 | 0.361 |
+| XGBoost | 2 | 0.480 | 5 | 9, 12 | 20.0 | 0.62 | 0.49% | 0.826 | 0.093 | 0.168 | 0.604 | 0.353 |
+| IF + PCA | 0 | 0.511 | 5 | 10, 14 | 18.6 | 1.23 | 0.85% | 0.417 | 0.025 | 0.046 | 0.524 | 0.232 |
+| IF + PCA | 1 | 0.523 | 5 | 10, 14 | 17.6 | 1.23 | 0.85% | 0.462 | 0.029 | 0.055 | 0.528 | 0.235 |
+| IF + PCA | 2 | 0.509 | 5 | 10, 14 | 18.8 | 0.92 | 0.67% | 0.389 | 0.017 | 0.033 | 0.526 | 0.230 |
+| Ensemble (max) | 0 | 0.592 | 7 | none | 18.9 | 0.51 | 0.61% | 0.796 | 0.096 | 0.171 | 0.600 | 0.351 |
+| Ensemble (max) | 1 | 0.620 | 7 | none | 15.0 | 0.51 | 0.67% | 0.788 | 0.101 | 0.179 | 0.605 | 0.355 |
+| Ensemble (max) | 2 | 0.476 | 5 | 9, 12 | 20.0 | 0.31 | 0.43% | 0.816 | 0.076 | 0.139 | 0.599 | 0.348 |
+
+**Per attack** (delay from the real start, and hours caught out of the attack's hours; for the 3-seed models, seed 0 / 1 / 2)
+
+| Attack (hours) | Ridge | Transformer | XGBoost | IF + PCA | Ensemble (max) |
+|---|---|---|---|---|---|
+| 8 (70) | 2 h, 39 | 2 h, 29 | 20 h, 5 / 3 / 5 | 21 h, 2 / 2 / 1 | 20 h, 4 / 3 / 2 |
+| 9 (65) | 1 h, 25 | 1 h, 22 | miss / miss / miss | 22 / 21 / 23 h, 2 / 3 / 1 | 23 / 23 h / miss, 1 / 1 / 0 |
+| 10 (31) | 0 h, 30 | 0 h, 31 | 25 h, 3 / 4 / 3 | miss / miss / miss | 25 h, 3 / 3 / 2 |
+| 11 (31) | 0 h, 30 | 0 h, 31 | 4 h, 23 / 23 / 23 | 8 / 4 / 8 h, 2 / 3 / 1 | 4 h, 23 / 23 / 22 |
+| 12 (100) | 0 h, 93 | 0 h, 63 | miss / miss / miss | 9 h, 3 / 3 / 3 | 9 / 18 h / miss, 2 / 1 / 0 |
+| 13 (80) | 0 h, 76 | 0 h, 54 | 5 / 5 / 40 h, 5 / 6 / 4 | 33 h, 1 / 1 / 1 | 40 / 5 / 40 h, 2 / 5 / 2 |
+| 14 (30) | 8 h, 8 | 8 h, 5 | 11 / 10 / 11 h, 4 / 5 / 3 | miss / miss / miss | 11 / 10 / 11 h, 4 / 5 / 3 |
+| All (407) | 301 | 235 | 40 / 41 / 38 | 10 / 12 / 7 | 39 / 41 / 31 |
+
+**Test set next to the Dataset 2 dry run**
+
+| Model | S (Dataset 2 → Test) | Attacks detected | Mean delay (h) | Episodes / week | Normal hours alarmed | Recall | ROC-AUC | PR-AUC |
+|---|---|---|---|---|---|---|---|---|
+| Ridge | 0.840 → 0.910 | 7 → 7 | 7.7 → 1.6 | 1.34 → 1.64 | 0.91% → 1.10% | 0.598 → 0.740 | 0.865 → 0.903 | 0.735 → 0.852 |
+| Transformer | 0.895 → 0.870 | 7 → 7 | 1.7 → 1.6 | 1.15 → 1.13 | 0.88% → 0.85% | 0.630 → 0.577 | 0.919 → 0.920 | 0.792 → 0.844 |
+| XGBoost | 0.543 → 0.502 | 4.3 → 5.0 | 17.5 → 15.3 | 0.85 → 0.89 | 1.28% → 0.69% | 0.259 → 0.097 | 0.748 → 0.608 | 0.445 → 0.357 |
+| IF + PCA | 0.696 → 0.514 | 6.0 → 5.0 | 12.1 → 18.3 | 1.26 → 1.13 | 0.92% → 0.79% | 0.295 → 0.024 | 0.674 → 0.526 | 0.430 → 0.232 |
+| Ensemble (max) | 0.746 → 0.562 | 7.0 → 6.3 | 20.6 → 18.0 | 0.92 → 0.44 | 1.45% → 0.57% | 0.492 → 0.091 | 0.860 → 0.602 | 0.619 → 0.351 |
+
+What this shows:
+- **Ridge and the Transformer catch all 7 Test attacks, both with a mean delay of 1.6 hours.** Ridge has the best S on the Test set (0.910 against 0.870). It catches more attack hours (301 of 407 against 235), mostly in attacks 12 and 13. The Transformer has the best ROC-AUC (0.920) and fewer false alarms (1.13 episodes per week against 1.64).
+- **Ridge and the Transformer are outside the budget on the Test set.** Ridge has 1.64 episodes per week and 1.10% of normal hours under alarm. The Transformer has 1.13 episodes per week.
+- **The ensemble is inside the budget in all 3 seeds** (0.44 episodes per week), but it catches few attack hours (recall 0.091) and is slow (18 hours). It misses attacks 9 and 12 in seed 2.
+- **XGBoost and IF + PCA drop the most from Dataset 2 to the Test set.** XGBoost misses attacks 9 and 12 in every seed. IF + PCA misses attacks 10 and 14 in every seed. IF + PCA's recall falls from 0.295 to 0.024.
+- **Attacks 10 and 11 turn on pump 3**, whose columns we dropped (`notebooks/Test_Prep.ipynb`). Ridge and the Transformer still catch them in the first hour, through their side effects on other sensors.
+- These are the numbers we report. We do not change any model, threshold or score type after seeing them.
 
 ## 10. Cautions
 

@@ -1,0 +1,78 @@
+{
+  "run_on": "test",
+  "unlock_test": true,
+  "run_at": "2026-11-23T21:13:52",
+  "git_commit": "09661337b39a10a4d44031586cd79f825b1c0a37",
+  "data": "..\\data\\processed\\test_eval.csv",
+  "attack_windows": "..\\data\\attack_windows_test.csv",
+  "rows": 2089,
+  "attack_hours": 407,
+  "scored_hours": 2066,
+  "first_scored_hour": "2017-01-04 23:00:00",
+  "warmup_hours": 23,
+  "merge_gap_hours": 2,
+  "grace_hours": 3,
+  "score": "topk_percentile",
+  "top_k": 3,
+  "budget": {
+    "max_alarm_fraction": 0.01,
+    "max_episodes_per_week": 1.0
+  },
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "frozen": {
+    "ridge": {
+      "model": "..\\models\\Ridge\\ridge_model.joblib",
+      "calibration": "..\\models\\Ridge\\calibration\\calibration.pt",
+      "threshold": 0.9974937343358397
+    },
+    "transformer": {
+      "model": "..\\models\\Transformer\\Notebook\\Model Weights\\best_model.pt",
+      "calibration": "..\\models\\Transformer\\Notebook\\Model Weights\\calibration\\calibration.pt",
+      "window": 12,
+      "seed": 0,
+      "threshold": 0.9984478075281334
+    },
+    "xgboost": {
+      "models": "..\\results\\xgboost_iforest_ensemble\\xgb\\seed{k}\\models",
+      "scoring": "fold models in turn by row position",
+      "calibration_reference": "..\\results\\xgboost_iforest_ensemble\\xgb\\seed{k}\\xgb_hourly_scores.csv"
+    },
+    "iforest_pca": {
+      "models": "..\\models\\Ensemble\\iforest_pca_models\\seed{k}.joblib",
+      "calibration_reference": "..\\results\\xgboost_iforest_ensemble\\iforest\\seed{k}\\iforest_hourly_scores.csv"
+    },
+    "ensemble": {
+      "fusion": "max of calibration percentiles",
+      "thresholds_from": "..\\models\\Ensemble\\notebook_outputs\\all_runs.csv"
+    },
+    "thresholds": {
+      "XGBoost": {
+        "0": 0.9923798358733881,
+        "1": 0.9917936694021102,
+        "2": 0.9923798358733881
+      },
+      "IF + PCA": {
+        "0": 0.9929660023446659,
+        "1": 0.9929660023446659,
+        "2": 0.9929660023446659
+      },
+      "Ensemble (max)": {
+        "0": 0.9958968347010551,
+        "1": 0.9964830011723329,
+        "2": 0.9964830011723329
+      }
+    }
+  },
+  "versions": {
+    "python": "3.13.5",
+    "numpy": "2.5.2",
+    "pandas": "3.0.5",
+    "scikit-learn": "1.9.0",
+    "torch": "2.13.0+cpu",
+    "xgboost": "3.4.1"
+  }
+}
