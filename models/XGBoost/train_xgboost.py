@@ -6,10 +6,18 @@ Supervised XGBoost detector for BATADAL, after Nemade et al. (2026).
         --out-dir runs/xgb \
         --seeds 0 1 2
 
-Labels (project decision): Dataset 1 is all normal; Dataset 2 contributes only
-its confirmed attack hours (ATT_FLAG == 1, 219 hours in 5 of the 7 attacks).
-ATT_FLAG == -999 rows are dropped: they are never a training label and never an
-hour-level evaluation label.
+Labels (project decision, --label-rule confirmed_only): Dataset 1 is all normal;
+Dataset 2 contributes only its confirmed attack hours (ATT_FLAG == 1, 219 hours in
+5 of the 7 attacks). ATT_FLAG == -999 rows are dropped: never a training label and
+never a headline hour-level evaluation label. The proposal's label-sensitivity
+experiment is --label-rule minus999_normal / confirmed_only / schedule; every run
+reports recall and AUC against the confirmed AND the schedule labels.
+
+Reporting: precision and F1 are NOT computed here (true positives come from Dataset 2
+and false positives from the validation block, so they only reflect the chosen mix).
+Use alarm hours per clean week; compute precision/F1 on the Test set only. The S-score
+is "approximate" for the same reason. Episodes merge alarm runs <= MERGE_GAP_HOURS apart.
+Hours of Dataset 2 outside every attack window are scored as an era check.
 
 Protocol (this is where it differs from the paper, which scored the same series
 it trained on):
@@ -51,7 +59,7 @@ import matplotlib.pyplot as plt
 
 from xgb_data import load_blocks
 from xgb_metrics import (
-    HOURS_PER_WEEK, roc_auc, pr_auc, episode_spans, clean_block_stats, find_threshold)
+    HOURS_PER_WEEK, MERGE_GAP_HOURS, roc_auc, pr_auc, episode_spans, clean_block_stats, find_threshold)
 
 # Nemade et al. (2026), section 4.2.
 PAPER_PARAMS = dict(
@@ -89,48 +97,65 @@ def run_seed(blocks, args, out_dir, seed):
     d2_F, d2_meta = blocks["d2"]
     columns = list(train_F.columns)
 
-    # ---- Label policy: positives are ATT_FLAG == 1 only; -999 is dropped.
-    is_pos = (d2_meta["att_flag"] == 1).to_numpy()
+    # ---- Label rule (--label-rule). Evaluation labels do not depend on it.
+    #   confirmed_only   positives = ATT_FLAG == 1; -999 rows are not used at all (project default)
+    #   minus999_normal  positives = ATT_FLAG == 1; every other Dataset 2 row (-999) is a NEGATIVE
+    #                    (the paper's reading). Leaves out only the held-out attack's own window.
+    #   schedule         positives = every hour of a real attack window (from attack_id)
     attack_id = d2_meta["attack_id"].to_numpy()
-    pos_X, pos_attack = d2_F.to_numpy()[is_pos], attack_id[is_pos]
+    flag = d2_meta["att_flag"].to_numpy()
+    d2_X = d2_F.to_numpy()
+    if args.label_rule == "schedule":
+        is_pos = attack_id > 0
+    else:
+        is_pos = flag == 1
+    pos_X, pos_attack = d2_X[is_pos], attack_id[is_pos]
     labeled_attacks = sorted(int(a) for a in np.unique(pos_attack))
     all_attacks = sorted(int(a) for a in np.unique(attack_id) if a > 0)
     unseen_attacks = [a for a in all_attacks if a not in labeled_attacks]
+    extra_neg = (flag != 1) if args.label_rule == "minus999_normal" else np.zeros(len(flag), bool)
+    d2_clean_in_training = bool(extra_neg[attack_id == 0].any())
 
-    # Hours scored on Dataset 2: every hour inside a real attack window. Only
-    # the ATT_FLAG == 1 ones count as labeled; the rest feed detection delay.
+    # Hours scored on Dataset 2: every hour inside a real attack window (the ATT_FLAG == 1 ones
+    # are the confirmed labels; the rest feed detection delay and the schedule-label figures),
+    # plus the hours outside every window (an era check: they should alarm at <= the budget).
     in_window = attack_id > 0
-    win_X = d2_F.to_numpy()[in_window]
+    win_X = d2_X[in_window]
     win_attack = attack_id[in_window]
-    win_flag = d2_meta["att_flag"].to_numpy()[in_window]
+    win_flag = flag[in_window]
     win_when = d2_meta["datetime"].to_numpy()[in_window]
     win_row = d2_meta["row"].to_numpy()[in_window]
+    out_X = d2_X[~in_window]
 
     neg_X = train_F.to_numpy()
 
     # ---- One model per held-out attack, plus the all-positives model.
-    setups = {f"fold{a}": pos_attack != a for a in labeled_attacks}
-    setups["final"] = np.ones(len(pos_X), dtype=bool)
+    setups = {f"fold{a}": a for a in labeled_attacks}
+    setups["final"] = None
     models = {}
-    for name, use in setups.items():
-        model = fit_xgb(neg_X, pos_X[use], params, seed, args.n_jobs)
+    for name, held_out in setups.items():
+        use = np.ones(len(pos_X), bool) if held_out is None else pos_attack != held_out
+        extra = extra_neg & ~((attack_id == held_out) if held_out is not None else np.zeros(len(flag), bool))
+        model = fit_xgb(np.vstack([neg_X, d2_X[extra]]), pos_X[use], params, seed, args.n_jobs)
         cal_scores = proba(model, cal_F.to_numpy())
         val_scores = proba(model, val_F.to_numpy())
         threshold = find_threshold(
-            cal_scores, args.max_alarm_fraction, args.max_episodes_per_week)
+            cal_scores, args.max_alarm_fraction, args.max_episodes_per_week, args.merge_gap_hours)
         models[name] = {
             "model": model, "threshold": threshold,
-            "n_pos_train": int(use.sum()),
+            "n_pos_train": int(use.sum()), "n_extra_neg": int(extra.sum()),
             "cal_scores": cal_scores, "val_scores": val_scores,
-            "cal_stats": clean_block_stats(cal_scores, threshold),
-            "val_stats": clean_block_stats(val_scores, threshold),
-            "win_scores": proba(model, win_X)}
+            "cal_stats": clean_block_stats(cal_scores, threshold, args.merge_gap_hours),
+            "val_stats": clean_block_stats(val_scores, threshold, args.merge_gap_hours),
+            "win_scores": proba(model, win_X), "out_scores": proba(model, out_X)}
 
     # The model that scores each attack never trained on it.
     scorer = {a: (f"fold{a}" if a in labeled_attacks else "final") for a in all_attacks}
+    fold_names = [n for n in models if n != "final"]
 
-    # ---- Per attack: detection, delay, labeled-hour recall.
+    # ---- Per attack: detection, delay, recall on confirmed and on schedule labels.
     per_attack, ttd_ratios, oof_scores, tp_total, pos_total = [], [], np.zeros(len(win_X)), 0, 0
+    win_alarm_total, win_hours_total = 0, 0
     for a in all_attacks:
         info = models[scorer[a]]
         sel = win_attack == a
@@ -144,6 +169,8 @@ def run_seed(blocks, args, out_dir, seed):
         tp = int((alarms & labeled).sum())
         tp_total += tp
         pos_total += int(labeled.sum())
+        win_alarm_total += int(alarms.sum())
+        win_hours_total += hours
         ttd_ratios.append((delay if delay is not None else hours) / hours)
         per_attack.append({
             "attack": a, "real_hours": hours, "labeled_hours": int(labeled.sum()),
@@ -157,24 +184,35 @@ def run_seed(blocks, args, out_dir, seed):
     used = sorted(set(scorer.values()))
     val_alarm_fraction = float(np.mean([models[n]["val_stats"]["alarm_fraction"] for n in used]))
     val_episodes_week = float(np.mean([models[n]["val_stats"]["episodes_per_week"] for n in used]))
+    val_alarm_hours = float(np.mean([models[n]["val_stats"]["alarm_hours"] for n in used]))
+    n_val = len(val_F)
     tnr = 1.0 - val_alarm_fraction
     recall = ratio(tp_total, pos_total)
-    fp_mean = float(np.mean([models[n]["val_stats"]["alarm_hours"] for n in used]))
-    precision = ratio(tp_total, tp_total + fp_mean)
-    f1 = (2 * precision * recall / (precision + recall)
-          if precision and recall and precision + recall > 0 else None)
 
-    # Pooled ranking figures: labeled attack hours (out-of-fold) against the
-    # validation block, where each negative gets the mean score of the models used.
-    val_mean = np.mean([models[n]["val_scores"] for n in used], axis=0)
+    # Each clean hour is scored by ONE fold model, round-robin (as the hourly export and the
+    # ensemble do), so negatives and attack hours are both single-model scores. A mean over
+    # models has lighter tails and would flatter the AUC.
+    def single(key, n):
+        stacked = np.stack([models[m][key] for m in fold_names])
+        pick = np.arange(n) % len(fold_names)
+        return stacked[pick, np.arange(n)], pick
+
+    val_single, _ = single("val_scores", n_val)
+    out_single, out_pick = single("out_scores", len(out_X))
+    out_thr = np.array([models[m]["threshold"] for m in fold_names])[out_pick]
+    out_alarm_fraction = float((out_single > out_thr).mean()) if len(out_X) else None
+
     pos_scores = oof_scores[win_flag == 1]
-    rank_scores = np.concatenate([pos_scores, val_mean])
-    rank_labels = np.concatenate([np.ones(len(pos_scores)), np.zeros(len(val_mean))])
+    rank_scores = np.concatenate([pos_scores, val_single])
+    rank_labels = np.concatenate([np.ones(len(pos_scores)), np.zeros(n_val)])
+    # Same negatives against the SCHEDULE labels: every hour of every real window is positive.
+    sch_scores = np.concatenate([oof_scores, val_single])
+    sch_labels = np.concatenate([np.ones(len(oof_scores)), np.zeros(n_val)])
 
     s_ttd = float(1.0 - np.mean(ttd_ratios))
     s_clf = (recall + tnr) / 2.0
     metrics = {
-        "seed": seed,
+        "seed": seed, "label_rule": args.label_rule, "time_features": bool(args.time_features),
         "attacks_detected": int(sum(r["detected"] for r in per_attack)),
         "attacks_total": len(per_attack),
         "missed_attacks": ",".join(str(r["attack"]) for r in per_attack if not r["detected"]),
@@ -183,16 +221,25 @@ def run_seed(blocks, args, out_dir, seed):
         "mean_delay_hours": ratio(sum(r["delay_hours"] for r in per_attack if r["detected"]),
                                   sum(r["detected"] for r in per_attack)),
         "labeled_positive_hours": pos_total,
-        "val_negative_hours": int(len(val_mean)),
-        "recall": recall, "precision": precision, "f1": f1,
-        "true_negative_rate": tnr,
+        "val_negative_hours": n_val,
+        # confirmed labels (ATT_FLAG == 1)
+        "recall": recall, "true_negative_rate": tnr,
         "val_alarm_fraction": val_alarm_fraction,
+        "val_alarm_hours_per_week": val_alarm_hours / (n_val / HOURS_PER_WEEK),
         "val_false_alarm_episodes_per_week": val_episodes_week,
         "roc_auc": roc_auc(rank_scores, rank_labels),
         "pr_auc": pr_auc(rank_scores, rank_labels),
-        "s_ttd": s_ttd, "s_clf": s_clf, "s_score": 0.5 * s_ttd + 0.5 * s_clf,
-        "n_features": len(columns),
-        "positive_to_negative_in_precision": f"{pos_total}:{len(val_mean)}"}
+        # schedule labels (all window hours)
+        "recall_schedule": ratio(win_alarm_total, win_hours_total),
+        "roc_auc_schedule": roc_auc(sch_scores, sch_labels),
+        "pr_auc_schedule": pr_auc(sch_scores, sch_labels),
+        # era check: Dataset 2 hours outside every attack window
+        "d2_clean_hours": int(len(out_X)), "d2_clean_alarm_fraction": out_alarm_fraction,
+        "d2_clean_in_training": d2_clean_in_training,
+        # Approximate: recall (Dataset 2) and TNR (validation) come from different series, so
+        # this is not the official S-score, which needs one labelled series (the Test set).
+        "s_ttd": s_ttd, "s_clf": s_clf, "s_score_approx": 0.5 * s_ttd + 0.5 * s_clf,
+        "n_features": len(columns)}
 
     # ---- Files.
     with open(os.path.join(out_dir, "metrics.json"), "w") as f:
@@ -200,6 +247,7 @@ def run_seed(blocks, args, out_dir, seed):
     pd.DataFrame(per_attack).to_csv(os.path.join(out_dir, "per_attack.csv"), index=False)
     pd.DataFrame([{
         "model": n, "n_pos_train": m["n_pos_train"], "threshold": m["threshold"],
+        "n_extra_neg": m["n_extra_neg"],
         "cal_alarm_fraction": m["cal_stats"]["alarm_fraction"],
         "cal_episodes_per_week": m["cal_stats"]["episodes_per_week"],
         "val_alarm_fraction": m["val_stats"]["alarm_fraction"],
@@ -207,22 +255,22 @@ def run_seed(blocks, args, out_dir, seed):
         for n, m in models.items()]).to_csv(os.path.join(out_dir, "folds.csv"), index=False)
 
     # Hourly scores for the ensemble: validation and calibration hours carry one
-    # held-out-attack model's score each (none of them trained on these hours);
-    # Dataset 2 attack-window hours carry the out-of-fold score.
-    fold_names = [n for n in models if n != "final"]
+    # held-out-attack model's score each (round-robin by row, never the mean of models);
+    # Dataset 2 attack-window hours carry the out-of-fold score; Dataset 2 hours outside
+    # every window carry a round-robin single-model score (attack_id 0, label 0).
     rows = []
     for source, meta, key in (("val", blocks["val"][1], "val_scores"), ("cal", blocks["cal"][1], "cal_scores")):
-        # Each hour gets the score of ONE held-out-attack model (round-robin by row), not
-        # the mean of all of them: Dataset 2 hours carry a single model's score, and a
-        # mean of models has lighter tails, which would make clean hours look calmer.
-        stacked = np.stack([models[n][key] for n in fold_names])
-        single_scores = stacked[np.arange(stacked.shape[1]) % len(fold_names), np.arange(stacked.shape[1])]
+        scores, _ = single(key, len(meta))
         rows.append(pd.DataFrame({
             "source": source, "datetime": meta["datetime"], "row": meta["row"],
-            "att_flag": meta["att_flag"], "label": 0, "attack_id": 0, "xgb_score": single_scores}))
+            "att_flag": meta["att_flag"], "label": 0, "attack_id": 0, "xgb_score": scores}))
     rows.append(pd.DataFrame({
         "source": "d2", "datetime": win_when, "row": win_row, "att_flag": win_flag,
         "label": 1, "attack_id": win_attack, "xgb_score": oof_scores}))
+    out_meta = d2_meta[~in_window]
+    rows.append(pd.DataFrame({
+        "source": "d2", "datetime": out_meta["datetime"].to_numpy(), "row": out_meta["row"].to_numpy(),
+        "att_flag": out_meta["att_flag"].to_numpy(), "label": 0, "attack_id": 0, "xgb_score": out_single}))
     pd.concat(rows).to_csv(os.path.join(out_dir, "xgb_hourly_scores.csv"), index=False)
 
     importance = pd.Series(models["final"]["model"].get_booster().get_score(importance_type="gain"))
@@ -277,14 +325,20 @@ def main():
     parser.add_argument("--n-estimators", type=int, default=PAPER_PARAMS["n_estimators"])
     parser.add_argument("--max-depth", type=int, default=PAPER_PARAMS["max_depth"])
     parser.add_argument("--learning-rate", type=float, default=PAPER_PARAMS["learning_rate"])
-    parser.add_argument("--no-time-features", action="store_true",
-                        help="Leave out the hour-of-day / day-of-week encodings.")
+    parser.add_argument("--time-features", action="store_true",
+                        help="Add hour-of-day / day-of-week encodings (off by default: with them "
+                             "fewer attacks are caught; that choice was made on Dataset 2).")
+    parser.add_argument("--label-rule", choices=["confirmed_only", "minus999_normal", "schedule"],
+                        default="confirmed_only",
+                        help="How Dataset 2 labels enter training (evaluation reports confirmed and schedule labels).")
+    parser.add_argument("--merge-gap-hours", type=int, default=MERGE_GAP_HOURS,
+                        help="Alarm runs this many quiet hours apart count as one episode.")
     parser.add_argument("--max-alarm-fraction", type=float, default=0.01)
     parser.add_argument("--max-episodes-per-week", type=float, default=1.0)
     parser.add_argument("--n-jobs", type=int, default=-1)
     args = parser.parse_args()
 
-    blocks = load_blocks(str(args.dataset_path), time_features=not args.no_time_features)
+    blocks = load_blocks(str(args.dataset_path), time_features=args.time_features)
     n_features = blocks["train"][0].shape[1]
     print(f"features: {n_features} | train {len(blocks['train'][0])} val {len(blocks['val'][0])} "
           f"cal {len(blocks['cal'][0])} | Dataset 2 rows {len(blocks['d2'][0])}")
@@ -297,7 +351,8 @@ def main():
               f"(unseen {metrics['unseen_detected']}/{len(metrics['unseen_attacks'].split(','))}) "
               f"delay {metrics['mean_delay_hours']} recall {metrics['recall']:.3f} "
               f"TNR {metrics['true_negative_rate']:.4f} ROC {metrics['roc_auc']:.3f} "
-              f"PR {metrics['pr_auc']:.3f} S {metrics['s_score']:.3f}")
+              f"PR {metrics['pr_auc']:.3f} S~ {metrics['s_score_approx']:.3f} "
+              f"alarm h/wk {metrics['val_alarm_hours_per_week']:.2f} D2-clean alarms {metrics['d2_clean_alarm_fraction']:.3f}")
 
     numeric = [k for k, v in all_metrics[0].items()
                if isinstance(v, (int, float)) and not isinstance(v, bool) and k != "seed"]

@@ -1,0 +1,8 @@
+attack,real_hours,labeled_hours,scored_by,threshold,detected,delay_hours,labeled_hours_alarmed,recall_on_labeled,window_hours_alarmed
+1,50,42,fold1,0.005545586813241243,False,,0,0.0,0
+2,24,0,final,0.018028125166893005,True,4.0,0,,17
+3,60,60,fold3,0.0050537846982479095,True,25.0,25,0.4166666666666667,25
+4,94,37,fold4,0.022032160311937332,True,10.0,36,0.972972972972973,70
+5,60,7,fold5,0.009183192625641823,True,8.0,0,0.0,13
+6,94,73,fold6,0.015644971281290054,False,,0,0.0,0
+7,110,0,final,0.018028125166893005,False,,0,,0

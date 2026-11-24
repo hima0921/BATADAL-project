@@ -56,13 +56,12 @@ def main():
     for seed in args.seeds:
         scores, explained, n_cols = fit_scores(blocks, seed)
         d2_meta = blocks["d2"][1]
-        in_window = (d2_meta["attack_id"] > 0).to_numpy()
         rows = []
         for source in ("val", "cal"):
             meta = blocks[source][1]
             rows.append(pd.DataFrame({"source": source, "row": meta["row"], "if_score": scores[source]}))
-        rows.append(pd.DataFrame({"source": "d2", "row": d2_meta["row"][in_window],
-                                  "if_score": scores["d2"][in_window]}))
+        # every Dataset 2 hour: attack windows and the hours outside them (era check)
+        rows.append(pd.DataFrame({"source": "d2", "row": d2_meta["row"], "if_score": scores["d2"]}))
         out = args.out_dir / f"seed{seed}"
         os.makedirs(out, exist_ok=True)
         pd.concat(rows).to_csv(out / "iforest_hourly_scores.csv", index=False)

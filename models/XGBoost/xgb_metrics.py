@@ -9,6 +9,9 @@ built they should move into one shared module.
 import numpy as np
 
 HOURS_PER_WEEK = 24 * 7
+# Fixed before any test-set scoring and used for every detector: alarm runs separated by at most
+# this many quiet hours count as ONE episode (a flickering alarm is one event, not many).
+MERGE_GAP_HOURS = 3
 
 
 def roc_auc(scores, labels):
@@ -36,7 +39,7 @@ def pr_auc(scores, labels):
     return float(np.sum(np.diff(np.concatenate([[0.0], recall])) * precision))
 
 
-def episode_spans(alarms, merge_gap_hours=0):
+def episode_spans(alarms, merge_gap_hours=MERGE_GAP_HOURS):
     """Alarm episodes as (first, last) index pairs; runs <= merge_gap quiet hours apart merge."""
     alarm_hours = np.flatnonzero(alarms)
     if len(alarm_hours) == 0:
@@ -47,7 +50,7 @@ def episode_spans(alarms, merge_gap_hours=0):
     return list(zip(starts.tolist(), ends.tolist()))
 
 
-def clean_block_stats(scores, threshold, merge_gap_hours=0):
+def clean_block_stats(scores, threshold, merge_gap_hours=MERGE_GAP_HOURS):
     """False-alarm figures on a block of attack-free hours."""
     alarms = scores > threshold
     episodes = len(episode_spans(alarms, merge_gap_hours))
@@ -59,7 +62,7 @@ def clean_block_stats(scores, threshold, merge_gap_hours=0):
         "episodes_per_week": float(episodes / (len(scores) / HOURS_PER_WEEK))}
 
 
-def find_threshold(scores, max_alarm_fraction=0.01, max_episodes_per_week=1.0, merge_gap_hours=0):
+def find_threshold(scores, max_alarm_fraction=0.01, max_episodes_per_week=1.0, merge_gap_hours=MERGE_GAP_HOURS):
     """
     Lowest threshold whose alarms (score > threshold) stay inside BOTH budgets
     on clean calibration scores. Candidates run from the highest score down and

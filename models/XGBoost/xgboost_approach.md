@@ -20,7 +20,7 @@ The 219 labeled hours cover only 5 of the 7 real attacks (1, 3, 4, 5, 6). Attack
 
 ## Method (what follows the paper, what does not)
 
-Follows the paper: 400 trees, depth 6, learning rate 0.05, 0.8 row and column subsampling, `scale_pos_weight` = negatives / positives; lag 1-3, first differences at 1 and 3, rolling mean/std/deviation (3, 6, 24 h) for tank levels and pressures, cyclical hour and weekday. This gives 391 features from the 36 non-constant sensors (the paper reports 376 from 43).
+Follows the paper: 400 trees, depth 6, learning rate 0.05, 0.8 row and column subsampling, `scale_pos_weight` = negatives / positives; lag 1-3, first differences at 1 and 3, rolling mean/std/deviation (3, 6, 24 h) for tank levels and pressures, cyclical hour and weekday (the last off by default, see below). This gives 391 features from the 36 non-constant sensors (the paper reports 376 from 43); the default run leaves out the four hour/weekday features and uses 387.
 
 Differs from the paper, on purpose:
 
@@ -30,27 +30,55 @@ Differs from the paper, on purpose:
 - **No negative subsampling**: all of the Dataset 1 train block is used, balanced with `scale_pos_weight`.
 - Trees do not need scaling; the processed files are already Training-scaled.
 
-## First results (3 seeds, mean)
+## Results (3 seeds, mean)
 
-| | with time features | `--no-time-features` |
+Default run: no time features, `confirmed_only` labels, episodes merge alarms at most 3 quiet hours apart (`MERGE_GAP_HOURS`, fixed for every detector).
+
+| | no time features (default) | with `--time-features` |
 |---|---|---|
-| Attacks detected (of 7) | 4.0 | 5.0 |
-| Unseen attacks 2, 7 detected (of 2) | 1.0 | 1.3 |
-| Mean delay, detected only (h) | 10.9 | 15.1 |
-| Recall on labeled hours | 0.275 | 0.277 |
-| Precision (219 positives vs 1,705 validation hours) | 0.85 | 0.81 |
-| True-negative rate (validation) | 0.994 | 0.991 |
-| ROC-AUC / PR-AUC | 0.67 / 0.47 | 0.66 / 0.46 |
-| S-score | 0.55 | 0.60 |
+| Attacks detected (of 7) | 5.0 | 4.0 |
+| Unseen attacks 2, 7 detected (of 2) | 1.3 | 1.0 |
+| Mean delay, detected only (h) | 15.1 | 10.9 |
+| Recall on confirmed labeled hours | 0.28 | 0.28 |
+| Recall on schedule labels (every window hour) | 0.27 | 0.25 |
+| Validation alarm hours per clean week | 1.48 | 1.12 |
+| ROC-AUC / PR-AUC (confirmed labels) | 0.69 / 0.48 | 0.70 / 0.49 |
+| ROC-AUC (schedule labels) | 0.75 | 0.75 |
+| Dataset 2 hours outside windows that alarm (era check) | 1.8% | 1.7% |
+| Approximate S-score | 0.60 | 0.55 |
 
-Read these with care: the precision depends on the arbitrary 219:1,705 mix, only 7 attacks exist, and seeds disagree on which attacks are caught (attack 1 and 6 are usually missed).
-The paper's F1 of 0.93 is an in-sample figure and is not comparable to these.
+How to read these:
+
+- **No precision or F1.** Their true positives come from Dataset 2 and their false positives from the validation block, so they only reflect the chosen 219:1,705 mix. Development tables give alarm hours per clean week; compute precision and F1 on the Test set only. The S-score is "approximate" for the same reason: recall (Dataset 2) and TNR (validation) come from different series, and the official one needs one labelled series.
+- **AUC compares like with like.** Every clean hour is scored by one fold model (round-robin), as every attack hour is; averaging the fold models would give clean hours lighter-tailed scores and inflate the AUC.
+- **Time features were dropped by default** because fewer attacks are caught with them (4.0 vs 5.0). That choice was made by looking at Dataset 2 results, so it is a tuned choice, not a pre-registered one. Seeds also disagree on which attacks are caught.
+- The paper's F1 of 0.93 is an in-sample figure and is not comparable to these.
+
+### Era check
+
+Dataset 1 (all negatives) is from 2014 and Dataset 2 (all positives) from 2016. The hours of Dataset 2 outside every attack window are scored and never trained on under `confirmed_only`. They alarm at 1.7-1.9% against the 1% budget set on 2014 data: a mild excess, not the large one that would mean the model reacts mostly to the year, but it is not zero either. Part of it can be genuine drift between years, so treat it as a warning and keep the budget in mind when reading the false-alarm figures.
+
+### Label-rule sensitivity (`--label-rule`)
+
+Trained under three rules, all evaluated on the same labels (3 seeds, mean):
+
+| | `confirmed_only` | `minus999_normal` | `schedule` |
+|---|---|---|---|
+| Attacks detected (of 7) | 5.0 | 5.0 | 7.0 |
+| Mean delay (h) | 15.1 | 10.2 | 23.6 |
+| Recall, confirmed labels | 0.28 | 0.26 | 0.62 |
+| Recall, schedule labels | 0.27 | 0.21 | 0.46 |
+| Validation alarm hours per week | 1.5 | 1.5 | 4.7 |
+| ROC-AUC, confirmed / schedule | 0.69 / 0.75 | 0.73 / 0.77 | 0.96 / 0.85 |
+| Dataset 2 outside-window alarm rate | 1.8% | 0.9% (trained on, in-sample) | 2.9% |
+
+`schedule` trains on every hour of every window, so the model also sees attack onsets and detects all 7, but its alarms on clean data run well above the budget (4.7 alarm hours per week on validation, 2.9% outside the windows), (a likely reason, not tested here: window hours that look normal are taught as attacks). Its figures are not directly comparable with the other two for that reason. `minus999_normal` trains on the outside-window Dataset 2 hours, so its era figure is in-sample and should not be read as a check.
 
 ## Known limits
 
-- With `-999` dropped, all negatives come from 2014 (Dataset 1) and all positives from 2016. A classifier could partly learn the era instead of the attack. The weak out-of-attack scores suggest this is not what is being learned, but it has not been tested directly.
-- Labeled hours are the middle of some attacks (for example 7 of the 60 hours of attack 5), so the "start" of an attack is not in the positives.
-- Not yet done: Isolation Forest (+PCA), the ensemble, and any use of the Test set.
+- Labeled hours are the middle of some attacks (for example 7 of the 60 hours of attack 5), so under `confirmed_only` the onset is not in the positives; the `schedule` rule covers it.
+- XGBoost gives one score per hour, not per sensor, so it cannot enter the proposal's per-sensor fusion. It is used only in the system-level fusion variant and in the XGBoost + Isolation Forest ensemble.
+- Only 7 attacks exist, and the S-score and any F1 must be recomputed on the Test set.
 
 ## Why the paper's numbers are higher (`paper_protocol_check.py`)
 
