@@ -1,0 +1,7 @@
+iforest,detector,detected,mean_delay,recall,tnr,val_alarm_hours_per_week,d2_clean_alarm_fraction,d2_clean_episodes_per_week,recall_schedule,roc_auc,pr_auc,roc_auc_schedule,s_score_approx
+team,XGBoost,4.333,17.533,0.248,0.995,0.92,0.013,0.846,0.259,0.692,0.48,0.748,0.542
+team,Isolation Forest,5.333,34.889,0.052,0.994,1.084,0.009,1.353,0.027,0.729,0.292,0.651,0.463
+team,Ensemble (max),6.333,24.016,0.259,0.993,1.215,0.014,1.107,0.255,0.875,0.584,0.824,0.626
+own_pca,XGBoost,4.333,17.533,0.248,0.995,0.92,0.013,0.846,0.259,0.692,0.48,0.748,0.542
+own_pca,Isolation Forest,6.0,12.111,0.482,0.993,1.215,0.009,1.261,0.295,0.802,0.624,0.673,0.744
+own_pca,Ensemble (max),7.0,20.571,0.693,0.995,0.821,0.014,0.923,0.492,0.949,0.866,0.864,0.799

@@ -1,0 +1,116 @@
+{
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "args": {
+    "dataset_path": "../../data/processed",
+    "out_dir": "/private/tmp/claude-503/-Users-suhasreddy/990bb8f5-a4a4-4e70-89ca-90ffb93a89ca/scratchpad/runs3/xgb_rule_schedule",
+    "seeds": "[0, 1, 2]",
+    "n_estimators": "400",
+    "max_depth": "6",
+    "learning_rate": "0.05",
+    "time_features": "False",
+    "label_rule": "schedule",
+    "grace_hours": "3",
+    "merge_gap_hours": "2",
+    "max_alarm_fraction": "0.01",
+    "max_episodes_per_week": "1.0",
+    "n_jobs": "-1"
+  },
+  "summary": {
+    "attacks_detected": {
+      "mean": 7.0,
+      "std": 0.0
+    },
+    "attacks_total": {
+      "mean": 7.0,
+      "std": 0.0
+    },
+    "unseen_detected": {
+      "mean": 0.0,
+      "std": 0.0
+    },
+    "mean_delay_hours": {
+      "mean": 23.57142857142857,
+      "std": 0.23328473740792235
+    },
+    "labeled_positive_hours": {
+      "mean": 219.0,
+      "std": 0.0
+    },
+    "val_negative_hours": {
+      "mean": 1705.0,
+      "std": 0.0
+    },
+    "recall": {
+      "mean": 0.6225266362252664,
+      "std": 0.02119998215705347
+    },
+    "true_negative_rate": {
+      "mean": 0.972238514173998,
+      "std": 0.0013200728722911627
+    },
+    "val_alarm_fraction": {
+      "mean": 0.027761485826001953,
+      "std": 0.0013200728722911855
+    },
+    "val_alarm_hours_per_week": {
+      "mean": 4.663929618768329,
+      "std": 0.22177224254491898
+    },
+    "val_false_alarm_episodes_per_week": {
+      "mean": 1.6000000000000003,
+      "std": 0.06329964839053154
+    },
+    "roc_auc": {
+      "mean": 0.9570945870548169,
+      "std": 0.0020678374619796658
+    },
+    "pr_auc": {
+      "mean": 0.785160142980016,
+      "std": 0.0017292227470790157
+    },
+    "recall_schedule": {
+      "mean": 0.4586720867208672,
+      "std": 0.010139992918086548
+    },
+    "roc_auc_schedule": {
+      "mean": 0.849889135254989,
+      "std": 0.0027555863179382794
+    },
+    "pr_auc_schedule": {
+      "mean": 0.7196266795770354,
+      "std": 0.0027539393902228314
+    },
+    "d2_clean_hours": {
+      "mean": 3641.0,
+      "std": 0.0
+    },
+    "d2_clean_alarm_fraction": {
+      "mean": 0.025633983337910834,
+      "std": 0.0016222690787026782
+    },
+    "d2_clean_episodes_per_week": {
+      "mean": 1.6764625102993682,
+      "std": 0.1426318691974072
+    },
+    "s_ttd": {
+      "mean": 0.7202376347057197,
+      "std": 0.0037441943364502164
+    },
+    "s_clf": {
+      "mean": 0.7973825751996322,
+      "std": 0.010606502206968967
+    },
+    "s_score_approx": {
+      "mean": 0.758810104952676,
+      "std": 0.005178269331406636
+    },
+    "n_features": {
+      "mean": 387.0,
+      "std": 0.0
+    }
+  }
+}
