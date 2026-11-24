@@ -95,7 +95,7 @@ def load_models(ensemble_dir=ENSEMBLE_DIR):
 
 # ------------------------------------------------- XGBoost + Isolation Forest
 
-ENSEMBLE_MERGE_GAP = 3  # the gap Suhas's threshold search uses (models/XGBoost/xgb_metrics.py)
+ENSEMBLE_MERGE_GAP = 2  # the gap Suhas's threshold search uses (models/XGBoost/xgb_metrics.py)
 
 
 def _episodes_per_week(alarms, merge_gap):

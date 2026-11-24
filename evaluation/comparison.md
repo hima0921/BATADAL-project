@@ -57,8 +57,8 @@ Detection delay per attack, in hours ("miss" means not detected; models with see
 ## Caveats
 
 - **XGBoost is supervised.** It is trained on Dataset 2 attacks, and each attack is scored by a model that did not see that attack (leave-one-attack-out). The other detectors never see an attack in training. Its numbers are fair as out-of-fold results, but with only 7 attacks they are noisy.
-- **The ensemble keeps Suhas's threshold rule.** Its threshold search merges alarms within 3 quiet hours on calibration, as in `models/XGBoost/xgb_metrics.py`. Only the Dataset 2 scoring uses the shared rules above.
-- **These numbers differ from Suhas's own write-up.** He counts only the `ATT_FLAG` hours as attacks and counts false alarms on the validation block. The table above counts the full attack windows and the false alarms on Dataset 2, the same way as for every other model.
+- **The ensemble keeps Suhas's threshold rule.** Its threshold search merges alarms within 2 quiet hours on calibration, as in `models/XGBoost/xgb_metrics.py`. This was 3 hours before Suhas's update; the results did not change.
+- **Recall and S differ from Suhas's own write-up.** He counts only the `ATT_FLAG` hours as attacks. The table above counts the full attack windows, the same way as for every other model. The false-alarm rates on Dataset 2 normal hours now agree: 0.85, 1.26 and 0.92 per week.
 
 ## Checks
 
