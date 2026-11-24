@@ -1,0 +1,16 @@
+# Exact versions used to freeze and check the models before Test scoring (Python 3.13.5, Windows, CPU).
+# With these versions: the Ridge calibration and the saved Ridge / Transformer results reproduce,
+# and the IF + PCA models in models/Ensemble/iforest_pca_models/ were saved (they are tied to scikit-learn 1.9.0).
+# models/Transformer/requirements.txt pins slightly newer versions (torch 2.15.0, numpy 2.5.4,
+# pandas 3.1.0, scikit-learn 1.9.1); with the versions below its saved results still match
+# (ROC-AUC / PR-AUC within about 4e-6, alarms identical).
+# On Windows, set KMP_DUPLICATE_LIB_OK=TRUE before importing torch.
+numpy==2.5.2
+pandas==3.0.5
+scipy==1.18.0
+scikit-learn==1.9.0
+joblib==1.5.3
+threadpoolctl==3.6.0
+matplotlib==3.11.2
+torch==2.13.0
+xgboost==3.4.1
